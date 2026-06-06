@@ -38,3 +38,9 @@
   - _Depends: 1.2, 2_
   - _Requirements: 1.1, 1.2, 2.1, 2.2, 2.3, 3.1, 4.1, 4.4, 5.2, 5.3, 5.4_
   - _Boundary: Deploy Workflow_
+  - _Manual: ライブ環境でのみ実施可能。GitHub リモートへの push、Secret `CLASPRC_JSON` 登録、Apps Script API 有効化（いずれもユーザー作業）が前提のため、エージェント環境では自動実行不可。ワークフローの静的構造（main 限定トリガー / needs:test ゲート / push-only / 認証展開）はタスク 1.1・1.2 で検証済み。手順は docs/deploy-setup.md「動作確認チェックリスト」を参照。_
+
+## Implementation Notes
+- `.clasp.json` の `scriptId` はリポジトリにコミット済みの placeholder（`REPLACE_WITH_YOUR_SCRIPT_ID`）。作業ツリーにはユーザーが設定した実 scriptId が未コミットで存在する。これは本 spec の対象外（既存設定の利用のみ）のため、各タスクのコミットからは選択的ステージングで除外している。
+- ワークフローは外部依存ゼロ前提（`npm install`/`npm ci` 不要、`npm test` = `node --test` のみ）。`src/*.js` は `typeof module` ガードにより GAS と Node テストの両環境で安全。
+- タスク 3.1 はライブの GitHub Actions 実行を要する手動検証。実装フェーズでは完了扱いにできない（_Manual_ 注記参照）。
