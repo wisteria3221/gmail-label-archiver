@@ -49,7 +49,7 @@
   - _Requirements: 3.4, 4.5, 4.6_
   - _Boundary: Deploy Workflow_
 
-- [ ] 4.2 セットアップドキュメントへの GAS_SCRIPT_ID 登録手順の追記
+- [x] 4.2 セットアップドキュメントへの GAS_SCRIPT_ID 登録手順の追記
   - Secret `GAS_SCRIPT_ID`（`.clasp.json` の `scriptId` 値）の登録手順を追記する
   - 実 scriptId はリポジトリにコミットせず Secret で管理する旨と、コミット版が placeholder である旨を明記する
   - 動作確認チェックリストに `GAS_SCRIPT_ID` 登録を加える
@@ -61,3 +61,4 @@
 - `.clasp.json` の `scriptId` はリポジトリにコミット済みの placeholder（`REPLACE_WITH_YOUR_SCRIPT_ID`）。作業ツリーにはユーザーが設定した実 scriptId が未コミットで存在する。これは本 spec の対象外（既存設定の利用のみ）のため、各タスクのコミットからは選択的ステージングで除外している。
 - ワークフローは外部依存ゼロ前提（`npm install`/`npm ci` 不要、`npm test` = `node --test` のみ）。`src/*.js` は `typeof module` ガードにより GAS と Node テストの両環境で安全。
 - タスク 3.1 はライブの GitHub Actions 実行を要する手動検証。実装フェーズでは完了扱いにできない（_Manual_ 注記参照）。
+- scriptId は Secret `GAS_SCRIPT_ID` で管理（ユーザー方針による後追い設計変更、タスク 4.x）。コミット版 `.clasp.json` は placeholder を維持し、deploy ジョブが `jq` で実 scriptId を一時注入する。Secret は2つ（`CLASPRC_JSON`, `GAS_SCRIPT_ID`）が必須。
