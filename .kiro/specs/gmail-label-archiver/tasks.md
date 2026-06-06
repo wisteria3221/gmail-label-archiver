@@ -1,6 +1,6 @@
 # Implementation Plan
 
-- [ ] 1. Foundation: clasp プロジェクトと共有定数のセットアップ
+- [x] 1. Foundation: clasp プロジェクトと共有定数のセットアップ
 - [x] 1.1 clasp プロジェクト構成と Apps Script マニフェストを用意する
   - `.clasp.json`（`rootDir: "src"`、scriptId はプレースホルダ）と `src/` ディレクトリを作成する
   - `src/appsscript.json` に `runtimeVersion: V8`、タイムゾーン、必要 OAuth スコープのみ（`https://mail.google.com/`、`spreadsheets.readonly`、`script.scriptapp`）を宣言する
@@ -8,7 +8,7 @@
   - 完了状態: `clasp push` が成功し、Apps Script 側にマニフェストとスコープが反映される
   - _Requirements: 5.3_
 
-- [ ] 1.2 共有定数モジュールを定義する
+- [x] 1.2 共有定数モジュールを定義する
   - Script Property キー（`CONFIG_SPREADSHEET_ID` / `CONFIG_SHEET_NAME`）、既定シート名、ヘッダ列名（`ラベル名` / `保持日数`）を定義する
   - 実行全体の上限 `MAX_THREADS_PER_RUN`（既定 300）、`ARCHIVE_BATCH_SIZE`（100）、`ARCHIVE_SEARCH_LIMIT`（500）、`TRIGGER_HANDLER`、`TRIGGER_HOUR`（既定 3）を定義する
   - 完了状態: すべての定数がグローバルから参照可能で、後続モジュールがハードコードを持たない
