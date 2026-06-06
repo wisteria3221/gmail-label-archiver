@@ -1,7 +1,7 @@
 # Implementation Plan
 
 - [ ] 1. Foundation: clasp プロジェクトと共有定数のセットアップ
-- [ ] 1.1 clasp プロジェクト構成と Apps Script マニフェストを用意する
+- [x] 1.1 clasp プロジェクト構成と Apps Script マニフェストを用意する
   - `.clasp.json`（`rootDir: "src"`、scriptId はプレースホルダ）と `src/` ディレクトリを作成する
   - `src/appsscript.json` に `runtimeVersion: V8`、タイムゾーン、必要 OAuth スコープのみ（`https://mail.google.com/`、`spreadsheets.readonly`、`script.scriptapp`）を宣言する
   - 外部ライブラリ・課金サービスの依存を一切含めない（組み込みサービスのみ）
