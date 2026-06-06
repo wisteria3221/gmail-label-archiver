@@ -139,17 +139,16 @@ function removeAllTriggers() {
 }
 
 /**
- * 1 行を標準ログへ出力する（5.4）。`console.log`（Node/GAS 双方）に加え、
- * GAS 環境で `Logger` が定義されていれば `Logger.log` にも出力する。
+ * 1 行を標準ログへ出力する（5.4）。出力先は `console.log` に統一する。
+ * GAS の V8 ランタイムでは `console.log` も `Logger.log` も同じ Cloud Logging
+ * （実行ログ）へ書き込まれるため、両方を呼ぶと同一行が二重出力される。これを
+ * 避けるため `Logger.log` には出力しない（Node/GAS 双方で 1 回のみ）。
  *
  * @param {string} line
  */
 function logLine(line) {
   if (typeof console !== 'undefined' && console.log) {
     console.log(line);
-  }
-  if (typeof Logger !== 'undefined' && Logger.log) {
-    Logger.log(line);
   }
 }
 

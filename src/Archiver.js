@@ -137,9 +137,10 @@ function archiveRule(rule, now, remaining) {
 }
 
 /**
- * ルール処理結果の 1 行サマリを標準ログへ出力する（5.4）。
- * `console.log`（Node/GAS 双方で利用可）に加え、GAS 環境で `Logger` が
- * 定義されていれば `Logger.log` にも出力する。
+ * ルール処理結果の 1 行サマリを標準ログへ出力する（5.4）。出力先は
+ * `console.log` に統一する。GAS の V8 ランタイムでは `console.log` も
+ * `Logger.log` も同じ Cloud Logging（実行ログ）へ書き込まれるため、両方を
+ * 呼ぶと同一行が二重出力される。これを避けるため `Logger.log` には出力しない。
  *
  * @param {string} labelName
  * @param {number} archivedCount
@@ -156,9 +157,6 @@ function logSummary(labelName, archivedCount, candidateCount) {
     '件';
   if (typeof console !== 'undefined' && console.log) {
     console.log(line);
-  }
-  if (typeof Logger !== 'undefined' && Logger.log) {
-    Logger.log(line);
   }
 }
 
