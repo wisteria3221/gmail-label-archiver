@@ -3,7 +3,15 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { buildQuery, isOlderThan, hasStar } = require('../src/Archiver.js');
+const Constants = require('../src/Constants.js');
+Object.assign(globalThis, Constants);
+
+const {
+  buildQuery,
+  isOlderThan,
+  hasStar,
+  archiveRule,
+} = require('../src/Archiver.js');
 
 const DAY_MS = 86400000;
 
@@ -68,4 +76,194 @@ test('hasStar: thread with starred messages -> true', () => {
 
 test('hasStar: thread without starred messages -> false', () => {
   assert.equal(hasStar({ hasStarredMessages: () => false }), false);
+});
+
+// --- archiveRule (2.1-2.6, 3.1-3.4, 5.1, 5.4) ---
+
+const RULE_NOW = new Date('2026-06-06T00:00:00Z');
+
+// fake GmailThread: only the methods archiveRule is allowed to use.
+function fakeThread(lastDateISO, starred) {
+  return {
+    getLastMessageDate: () => new Date(lastDateISO),
+    hasStarredMessages: () => starred,
+  };
+}
+
+// Install a GmailApp mock that exposes ONLY search + moveThreadsToArchive.
+// If archiveRule called any other (destructive) method, it would throw.
+function installGmail(searchResults) {
+  const archivedBatches = [];
+  globalThis.GmailApp = {
+    search: (q, start, max) => {
+      installGmail._lastSearch = { q, start, max };
+      return searchResults.slice(0, max);
+    },
+    moveThreadsToArchive: (threads) => {
+      archivedBatches.push(threads);
+    },
+  };
+  return archivedBatches;
+}
+
+function oldUnstarred() {
+  return fakeThread(new Date(RULE_NOW.getTime() - 365 * DAY_MS).toISOString(), false);
+}
+
+test('archiveRule: mixed candidates -> only old+unstarred archived (2.2, 2.5, 2.6, 3.1)', () => {
+  const old = oldUnstarred();
+  const recent = fakeThread(
+    new Date(RULE_NOW.getTime() - 1 * DAY_MS).toISOString(),
+    false
+  );
+  const starred = fakeThread(
+    new Date(RULE_NOW.getTime() - 365 * DAY_MS).toISOString(),
+    true
+  );
+  const batches = installGmail([old, recent, starred]);
+
+  const result = archiveRule(
+    { labelName: 'Newsletter', retentionDays: 30 },
+    RULE_NOW,
+    300
+  );
+
+  assert.equal(result.archivedCount, 1);
+  assert.equal(result.candidateCount, 3);
+  // exactly one batch with exactly the valid thread
+  assert.equal(batches.length, 1);
+  assert.equal(batches[0].length, 1);
+  assert.equal(batches[0][0], old);
+});
+
+test('archiveRule: query is built via buildQuery (2.1, 2.3)', () => {
+  installGmail([]);
+  archiveRule({ labelName: 'My Label', retentionDays: 7 }, RULE_NOW, 300);
+  assert.equal(
+    installGmail._lastSearch.q,
+    'label:"My Label" in:inbox -is:starred older_than:7d'
+  );
+});
+
+test('archiveRule: label-not-found / empty search -> 0 archived, never archives (2.4, 3.4)', () => {
+  const batches = installGmail([]);
+  const result = archiveRule(
+    { labelName: 'Missing', retentionDays: 30 },
+    RULE_NOW,
+    300
+  );
+  assert.equal(result.archivedCount, 0);
+  assert.equal(result.candidateCount, 0);
+  assert.equal(batches.length, 0);
+});
+
+test('archiveRule: candidates all filtered out -> 0 archived, never archives (3.4)', () => {
+  const recent = fakeThread(
+    new Date(RULE_NOW.getTime() - 1 * DAY_MS).toISOString(),
+    false
+  );
+  const batches = installGmail([recent]);
+  const result = archiveRule(
+    { labelName: 'Newsletter', retentionDays: 30 },
+    RULE_NOW,
+    300
+  );
+  assert.equal(result.archivedCount, 0);
+  assert.equal(result.candidateCount, 1);
+  assert.equal(batches.length, 0);
+});
+
+test('archiveRule: remaining cap -> archivedCount <= remaining, carry-over (5.1)', () => {
+  const valids = [
+    oldUnstarred(),
+    oldUnstarred(),
+    oldUnstarred(),
+    oldUnstarred(),
+    oldUnstarred(),
+  ];
+  const batches = installGmail(valids);
+  const result = archiveRule(
+    { labelName: 'Newsletter', retentionDays: 30 },
+    RULE_NOW,
+    2
+  );
+  assert.equal(result.archivedCount, 2);
+  // search is capped to min(remaining, ARCHIVE_SEARCH_LIMIT)
+  assert.equal(
+    installGmail._lastSearch.max,
+    Math.min(2, ARCHIVE_SEARCH_LIMIT)
+  );
+  // only 2 actually archived
+  const total = batches.reduce((n, b) => n + b.length, 0);
+  assert.equal(total, 2);
+});
+
+test('archiveRule: search max == min(remaining, ARCHIVE_SEARCH_LIMIT) when remaining huge', () => {
+  installGmail([]);
+  archiveRule({ labelName: 'Newsletter', retentionDays: 30 }, RULE_NOW, 100000);
+  assert.equal(installGmail._lastSearch.max, ARCHIVE_SEARCH_LIMIT);
+});
+
+test('archiveRule: remaining <= 0 -> 0 archived, search NOT called (5.1)', () => {
+  let searched = false;
+  globalThis.GmailApp = {
+    search: () => {
+      searched = true;
+      return [];
+    },
+    moveThreadsToArchive: () => {},
+  };
+  const result = archiveRule(
+    { labelName: 'Newsletter', retentionDays: 30 },
+    RULE_NOW,
+    0
+  );
+  assert.equal(result.archivedCount, 0);
+  assert.equal(result.candidateCount, 0);
+  assert.equal(result.labelName, 'Newsletter');
+  assert.equal(searched, false);
+});
+
+test('archiveRule: batching -> each moveThreadsToArchive call <= ARCHIVE_BATCH_SIZE (3.1)', () => {
+  const valids = [];
+  for (let i = 0; i < 150; i++) valids.push(oldUnstarred());
+  const batches = installGmail(valids);
+  const result = archiveRule(
+    { labelName: 'Newsletter', retentionDays: 30 },
+    RULE_NOW,
+    300
+  );
+  assert.equal(result.archivedCount, 150);
+  let total = 0;
+  for (const b of batches) {
+    assert.ok(b.length <= ARCHIVE_BATCH_SIZE, 'batch exceeds ARCHIVE_BATCH_SIZE');
+    total += b.length;
+  }
+  assert.equal(total, 150);
+});
+
+test('archiveRule: non-destructive -> only search + moveThreadsToArchive used (3.2, 3.3)', () => {
+  // mock exposes ONLY the two allowed methods; any other call throws.
+  const valids = [oldUnstarred(), oldUnstarred()];
+  installGmail(valids);
+  assert.doesNotThrow(() => {
+    archiveRule({ labelName: 'Newsletter', retentionDays: 30 }, RULE_NOW, 300);
+  });
+});
+
+test('archiveRule: returns correct ArchiveResult shape', () => {
+  installGmail([oldUnstarred()]);
+  const result = archiveRule(
+    { labelName: 'Newsletter', retentionDays: 30 },
+    RULE_NOW,
+    300
+  );
+  assert.deepEqual(Object.keys(result).sort(), [
+    'archivedCount',
+    'candidateCount',
+    'labelName',
+  ]);
+  assert.equal(result.labelName, 'Newsletter');
+  assert.equal(typeof result.archivedCount, 'number');
+  assert.equal(typeof result.candidateCount, 'number');
 });
