@@ -82,3 +82,4 @@
 - テストハーネス: GAS ネイティブのテスト機構がないため、Node 標準 `node:test`（ゼロ依存）を採用。`src/*.js` は末尾に `if (typeof module !== 'undefined' && module.exports) { module.exports = {...} }` ガードを付け、GAS（グローバルスコープ）と Node（require）双方でロード可能にした。`npm test`（= `node --test`）で `test/*.test.js` を自動探索。Node v24 では `node --test test/` は `test/` をモジュール解決しようとして失敗するため、引数なしの `node --test` を使用。
 - GAS サービス依存関数（readArchiveRules/archiveRule/Main 各関数）は、テスト時に `Object.assign(globalThis, require('../src/Constants.js'))` で定数をグローバルへ載せ、`globalThis.GmailApp` 等にモックを注入して検証する（GAS の単一グローバルスコープモデルを Node で再現）。
 - clasp 未インストール・Google 認証なしのため `clasp push` はこの環境で実行不可。タスク 1.1 は設定/マニフェストファイルの生成と妥当性検証までを完了範囲とした。
+- 【スコープ修正・手動検証で判明】`SpreadsheetApp.openById` は `spreadsheets.readonly` では権限不足で失敗する（"Required permissions: .../auth/spreadsheets"）。readonly は Sheets 高度サービス経由のみ有効なため、appsscript.json の設定シート用スコープを `https://www.googleapis.com/auth/spreadsheets` に変更。コードはシートへ書込まないため実挙動は読取専用。マニフェスト変更後は `clasp push` 後の再認証（新スコープへの同意）が必要。

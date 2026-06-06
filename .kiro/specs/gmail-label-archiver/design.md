@@ -397,7 +397,7 @@ function removeAllTriggers() {}
 ## Security Considerations
 - **OAuth スコープ最小化**: `appsscript.json` に必要スコープのみ宣言。
   - `https://mail.google.com/`（GmailApp によるアーカイブ=ラベル変更）
-  - `https://www.googleapis.com/auth/spreadsheets.readonly`（設定シート読取）
+  - `https://www.googleapis.com/auth/spreadsheets`（設定シート読取）。`SpreadsheetApp.openById` は `spreadsheets.readonly` では呼び出せず、フルの `spreadsheets` スコープを要求するため本スコープを宣言する（readonly は Sheets 高度サービス経由のみで有効）。本機能はシートへの書込みを一切行わず、実挙動は読取専用。
   - `https://www.googleapis.com/auth/script.scriptapp`（トリガー管理）
 - 本機能はメールを削除しない（可逆なアーカイブのみ）。スター付きと新しいメールを保守的に除外し、誤って必要メールを受信トレイから外すリスクを低減。
 - 設定スプレッドシートIDは Script Properties に保持し、コードにハードコードしない。
