@@ -36,7 +36,7 @@ function archiveLabeledThreads() {
     rules = readArchiveRules();
   } catch (err) {
     logLine(
-      'archiveLabeledThreads: 設定読取に失敗したため終了しました（構成不備）: ' +
+      '⚠️ [エラー] 設定の読み取りに失敗したため処理を中止しました（設定内容を確認してください）: ' +
         errorMessage(err)
     );
     return;
@@ -44,7 +44,7 @@ function archiveLabeledThreads() {
 
   // 2. 有効ルール 0 件 → 何もせず正常終了（1.3）。
   if (!rules || rules.length === 0) {
-    logLine('archiveLabeledThreads: 対象ルールがないため何もしません（1.3）。');
+    logLine('ℹ️ [スキップ] 対象のルールが無いため、処理を実行しませんでした。');
     return;
   }
 
@@ -67,15 +67,15 @@ function archiveLabeledThreads() {
       const result = archiveRule(rule, now, remaining);
       remaining -= result.archivedCount;
       processedCount += 1;
-      perRule.push(rule.labelName + '=' + result.archivedCount);
+      perRule.push('「' + rule.labelName + '」' + result.archivedCount + '件');
     } catch (err) {
       // ルール単位のエラーを記録し、次ルールへ継続（5.2）。
       errorCount += 1;
-      perRule.push(rule.labelName + '=ERROR');
+      perRule.push('「' + rule.labelName + '」エラー');
       logLine(
-        'archiveLabeledThreads: ルール処理でエラー label="' +
+        '⚠️ [エラー] ラベル「' +
           rule.labelName +
-          '": ' +
+          '」の処理中にエラーが発生しました: ' +
           errorMessage(err)
       );
     }
@@ -83,15 +83,15 @@ function archiveLabeledThreads() {
 
   // 4. 実行サマリを標準ログへ出力（5.4）。
   logLine(
-    'archiveLabeledThreads サマリ: rules_total=' +
+    '📊 [サマリ] ルール ' +
       rules.length +
-      ' processed=' +
+      '件中 処理成功 ' +
       processedCount +
-      ' errors=' +
+      '件 / エラー ' +
       errorCount +
-      ' remaining=' +
+      '件 / 残り処理可能 ' +
       remaining +
-      ' per_rule=[' +
+      '件\n   └ ルール別: [' +
       perRule.join(', ') +
       ']'
   );

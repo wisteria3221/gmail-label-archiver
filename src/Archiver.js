@@ -147,12 +147,13 @@ function archiveRule(rule, now, remaining) {
  */
 function logSummary(labelName, archivedCount, candidateCount) {
   const line =
-    'archiveRule label="' +
+    '✅ [アーカイブ完了] ラベル「' +
     labelName +
-    '" archived=' +
+    '」: アーカイブ ' +
     archivedCount +
-    ' candidates=' +
-    candidateCount;
+    '件 / 候補 ' +
+    candidateCount +
+    '件';
   if (typeof console !== 'undefined' && console.log) {
     console.log(line);
   }
