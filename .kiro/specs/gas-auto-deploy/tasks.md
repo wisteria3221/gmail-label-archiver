@@ -38,7 +38,24 @@
   - _Depends: 1.2, 2_
   - _Requirements: 1.1, 1.2, 2.1, 2.2, 2.3, 3.1, 4.1, 4.4, 5.2, 5.3, 5.4_
   - _Boundary: Deploy Workflow_
-  - _Manual: ライブ環境でのみ実施可能。GitHub リモートへの push、Secret `CLASPRC_JSON` 登録、Apps Script API 有効化（いずれもユーザー作業）が前提のため、エージェント環境では自動実行不可。ワークフローの静的構造（main 限定トリガー / needs:test ゲート / push-only / 認証展開）はタスク 1.1・1.2 で検証済み。手順は docs/deploy-setup.md「動作確認チェックリスト」を参照。_
+  - _Manual: ライブ環境でのみ実施可能。GitHub リモートへの push、Secret `CLASPRC_JSON`・`GAS_SCRIPT_ID` 登録、Apps Script API 有効化（いずれもユーザー作業）が前提のため、エージェント環境では自動実行不可。ワークフローの静的構造（main 限定トリガー / needs:test ゲート / push-only / 認証展開 / scriptId 注入）はタスク 1.1・1.2・4.x で検証済み。手順は docs/deploy-setup.md「動作確認チェックリスト」を参照。_
+
+- [ ] 4. scriptId の Secret 化対応
+- [x] 4.1 ワークフローへの scriptId 注入ステップの追加
+  - deploy ジョブに、Secret `GAS_SCRIPT_ID` を `env:` 経由で受け取り `jq` で `.clasp.json` の `scriptId` へ注入するステップを、clasp push の前に追加する
+  - scriptId をコマンド行・ログに露出させない（`env:` + `jq --arg`）
+  - 注入は認証情報展開の後・`clasp push` の前に行う
+  - observable: deploy.yml に scriptId 注入ステップが存在し、`GAS_SCRIPT_ID` が `secrets.` 参照かつ `env:` 経由で渡され、`jq` で `.clasp.json` に書き込まれる。YAML は妥当で test 58/58 通過
+  - _Requirements: 3.4, 4.5, 4.6_
+  - _Boundary: Deploy Workflow_
+
+- [ ] 4.2 セットアップドキュメントへの GAS_SCRIPT_ID 登録手順の追記
+  - Secret `GAS_SCRIPT_ID`（`.clasp.json` の `scriptId` 値）の登録手順を追記する
+  - 実 scriptId はリポジトリにコミットせず Secret で管理する旨と、コミット版が placeholder である旨を明記する
+  - 動作確認チェックリストに `GAS_SCRIPT_ID` 登録を加える
+  - observable: docs/deploy-setup.md に `GAS_SCRIPT_ID` の登録手順とチェックリスト項目が追加され、ワークフローの Secret 名と一致する
+  - _Requirements: 6.1_
+  - _Boundary: Setup Documentation_
 
 ## Implementation Notes
 - `.clasp.json` の `scriptId` はリポジトリにコミット済みの placeholder（`REPLACE_WITH_YOUR_SCRIPT_ID`）。作業ツリーにはユーザーが設定した実 scriptId が未コミットで存在する。これは本 spec の対象外（既存設定の利用のみ）のため、各タスクのコミットからは選択的ステージングで除外している。

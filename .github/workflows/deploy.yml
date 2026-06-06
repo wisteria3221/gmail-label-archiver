@@ -57,6 +57,18 @@ jobs:
           CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
         run: printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
 
+      # 実 scriptId を Secret から環境変数経由で受け取り、jq で .clasp.json の
+      # scriptId フィールドへ注入する。リポジトリには placeholder の scriptId を
+      # コミットした状態を維持し、実 scriptId はコマンド行・ログに露出させない
+      # （env: + jq --arg）。rootDir 等の既存設定は保持する。
+      # 注入は認証情報展開の後・clasp push の前に行う。
+      # 要件 3.4（注入した scriptId をデプロイ先に決定）/ 4.5（実 scriptId をコミット・永続化しない）
+      # / 4.6（Secret の scriptId を .clasp.json に反映したうえで clasp を実行）
+      - name: Set clasp scriptId from secret
+        env:
+          GAS_SCRIPT_ID: ${{ secrets.GAS_SCRIPT_ID }}
+        run: jq --arg id "$GAS_SCRIPT_ID" '.scriptId = $id' .clasp.json > .clasp.json.tmp && mv .clasp.json.tmp .clasp.json
+
       # clasp v3（メジャー固定）で push --force を実行し、src を既存
       # .clasp.json の scriptId が指す GAS プロジェクトへ同期する。
       # push のみ（versioned deploy は行わない）。認証不在/無効・push 失敗時は
