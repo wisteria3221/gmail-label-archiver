@@ -68,15 +68,15 @@
   - _Boundary: Main_
   - _Depends: 4.1_
 
-- [ ] 5. Validation: 手動統合シナリオ検証
-- [ ] 5.1 実 Gmail／Spreadsheet を用いた統合シナリオを検証する
+- [x] 5. Validation: 手動統合シナリオ検証
+- [x] 5.1 実 Gmail／Spreadsheet を用いた統合シナリオを検証する
   - 設定シート読取（有効行のみ返却・空シートで空動作）、アーカイブ実行（対象が外れ、スター付き・新しいメールが残る）を確認する
   - 非破壊確認（削除・既読化・他ラベル変更が起きていない）、トリガー冪等性、設定 → 手動実行 → 翌日トリガーで上限超過分が処理される持ち越しを確認する
   - 完了状態: 上記シナリオの実行ログとメール状態が期待どおりであることを確認できる
   - 手順は [docs/manual-verification.md](../../../docs/manual-verification.md) を参照
   - _Requirements: 1.1, 1.3, 2.1, 2.2, 2.4, 2.6, 3.1, 3.2, 3.3, 3.4, 4.2, 4.3, 5.1_
   - _Depends: 4.2_
-  - _ManualVerify: 実 Gmail/Spreadsheet・clasp push・Google 認証が必要なため、利用者環境での手動実行待ち（自律実行環境では検証不可）。ランブック docs/manual-verification.md を用意済み。_
+  - _ManualVerify: 利用者環境で docs/manual-verification.md の S1〜S5 を実行し検証 OK（2026-06-06）。スコープ修正（commit 781438d）後に再認証して全シナリオ合格。_
 
 ## Implementation Notes
 - テストハーネス: GAS ネイティブのテスト機構がないため、Node 標準 `node:test`（ゼロ依存）を採用。`src/*.js` は末尾に `if (typeof module !== 'undefined' && module.exports) { module.exports = {...} }` ガードを付け、GAS（グローバルスコープ）と Node（require）双方でロード可能にした。`npm test`（= `node --test`）で `test/*.test.js` を自動探索。Node v24 では `node --test test/` は `test/` をモジュール解決しようとして失敗するため、引数なしの `node --test` を使用。
