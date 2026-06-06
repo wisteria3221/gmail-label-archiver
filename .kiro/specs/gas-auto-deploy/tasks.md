@@ -1,6 +1,6 @@
 # Implementation Plan
 
-- [ ] 1. Deploy Workflow パイプラインの構築
+- [x] 1. Deploy Workflow パイプラインの構築
 - [x] 1.1 push トリガーとテストゲートの構築
   - main ブランチへの push でのみ起動するようトリガーを限定する
   - `concurrency` グループ（`deploy-gas`, `cancel-in-progress: false`）を設定し、連続 push 時にデプロイを直列化する
@@ -28,8 +28,8 @@
   - _Requirements: 6.1, 6.2, 6.3, 6.4_
   - _Boundary: Setup Documentation_
 
-- [ ] 3. パイプラインのエンドツーエンド検証
-- [ ] 3.1 デプロイパイプラインの実挙動検証
+- [x] 3. パイプラインのエンドツーエンド検証
+- [x] 3.1 デプロイパイプラインの実挙動検証
   - 成功パス: main への push で test → deploy が実行され success で終了する（実行前提として Task 2 の手動セットアップ＝Secret 登録・API 有効化が完了していること）
   - ゲート: テストを意図的に失敗させた場合に deploy がスキップされ、ワークフローが failure になる
   - 認証異常: Secret 未設定/無効の場合に deploy ジョブが failure となり、ログに認証エラーが残る
@@ -38,9 +38,9 @@
   - _Depends: 1.2, 2_
   - _Requirements: 1.1, 1.2, 2.1, 2.2, 2.3, 3.1, 4.1, 4.4, 5.2, 5.3, 5.4_
   - _Boundary: Deploy Workflow_
-  - _Manual: ライブ環境でのみ実施可能。GitHub リモートへの push、Secret `CLASPRC_JSON`・`GAS_SCRIPT_ID` 登録、Apps Script API 有効化（いずれもユーザー作業）が前提のため、エージェント環境では自動実行不可。ワークフローの静的構造（main 限定トリガー / needs:test ゲート / push-only / 認証展開 / scriptId 注入）はタスク 1.1・1.2・4.x で検証済み。手順は docs/deploy-setup.md「動作確認チェックリスト」を参照。_
+  - _Manual: ライブ検証実施（2026-06-06）。前提（GitHub リモート push、Secret `CLASPRC_JSON`・`GAS_SCRIPT_ID` 登録、Apps Script API 有効化）をユーザー作業で充足後に実行。①成功パス: 空コミット push で test→deploy が success（run 27059786384、Write clasp credentials / Set clasp scriptId from secret / Push src to GAS すべて通過）✅。④ブランチ限定: `verify/no-trigger` への push で workflow が起動せず（run 0 件）✅。②テスト失敗ゲート・③認証異常は main/Secret を一時破壊する破壊的検証のためスキップ（静的構造は needs:test ゲート＝タスク 1.1、認証展開＝タスク 1.2、scriptId 注入＝タスク 4.x で検証済み、かつ Secret 未登録時の旧 run 27059208065/27058395798 が deploy failure＝`Unexpected end of JSON input` を実証）。手順は docs/deploy-setup.md「動作確認チェックリスト」を参照。_
 
-- [ ] 4. scriptId の Secret 化対応
+- [x] 4. scriptId の Secret 化対応
 - [x] 4.1 ワークフローへの scriptId 注入ステップの追加
   - deploy ジョブに、Secret `GAS_SCRIPT_ID` を `env:` 経由で受け取り `jq` で `.clasp.json` の `scriptId` へ注入するステップを、clasp push の前に追加する
   - scriptId をコマンド行・ログに露出させない（`env:` + `jq --arg`）
