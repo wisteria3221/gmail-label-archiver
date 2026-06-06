@@ -6,7 +6,7 @@ const assert = require('node:assert/strict');
 const Constants = require('../src/Constants.js');
 Object.assign(globalThis, Constants);
 
-const { archiveLabeledThreads } = require('../src/Main.js');
+const { archiveLabeledThreads, setupDailyTrigger, removeAllTriggers } = require('../src/Main.js');
 
 /**
  * 各テストで globalThis 上の readArchiveRules / archiveRule を差し替える。
@@ -145,4 +145,114 @@ test('config error: readArchiveRules throws → archiveLabeledThreads does not t
 
 test('entry takes no arguments (trigger/manual common entry, 4.3)', () => {
   assert.equal(archiveLabeledThreads.length, 0, 'archiveLabeledThreads must take no parameters');
+});
+
+// --- 4.1 / 4.2: 日次トリガーの冪等なセットアップ／削除 ---
+
+/**
+ * トリガーストアを実際にモデル化したステートフルな ScriptApp モックを
+ * globalThis.ScriptApp にインストールし、ストア配列を返す。
+ */
+function installScriptApp() {
+  const store = [];
+  function makeTrigger(handler) {
+    return { getHandlerFunction: () => handler };
+  }
+  globalThis.ScriptApp = {
+    getProjectTriggers: () => store.slice(),
+    deleteTrigger: (t) => {
+      const i = store.indexOf(t);
+      if (i >= 0) store.splice(i, 1);
+    },
+    newTrigger: (handler) => {
+      const builder = {
+        timeBased: () => builder,
+        everyDays: (n) => {
+          builder._days = n;
+          return builder;
+        },
+        atHour: (h) => {
+          builder._hour = h;
+          return builder;
+        },
+        create: () => {
+          const t = makeTrigger(handler);
+          t._days = builder._days;
+          t._hour = builder._hour;
+          store.push(t);
+          return t;
+        },
+      };
+      return builder;
+    },
+    _store: store,
+  };
+  return store;
+}
+
+function triggersFor(store, handler) {
+  return store.filter((t) => t.getHandlerFunction() === handler);
+}
+
+function cleanupScriptApp() {
+  delete globalThis.ScriptApp;
+}
+
+test('setupDailyTrigger on empty store creates exactly one daily trigger (4.1)', () => {
+  const store = installScriptApp();
+
+  setupDailyTrigger();
+
+  const matching = triggersFor(store, TRIGGER_HANDLER);
+  assert.equal(matching.length, 1, 'exactly one archiveLabeledThreads trigger after setup');
+  assert.equal(matching[0]._days, 1, 'built with everyDays(1)');
+  assert.equal(matching[0]._hour, TRIGGER_HOUR, 'built with atHour(TRIGGER_HOUR)');
+
+  cleanupScriptApp();
+});
+
+test('setupDailyTrigger is idempotent: called twice still yields exactly one (4.2)', () => {
+  const store = installScriptApp();
+
+  setupDailyTrigger();
+  setupDailyTrigger();
+
+  const matching = triggersFor(store, TRIGGER_HANDLER);
+  assert.equal(matching.length, 1, 'calling setup twice must still yield exactly one trigger');
+  assert.equal(matching[0]._days, 1);
+  assert.equal(matching[0]._hour, TRIGGER_HOUR);
+
+  cleanupScriptApp();
+});
+
+test('setupDailyTrigger removes stale duplicates first, leaving exactly one (4.2)', () => {
+  const store = installScriptApp();
+  // Pre-seed two stale matching triggers.
+  globalThis.ScriptApp.newTrigger(TRIGGER_HANDLER).timeBased().everyDays(1).atHour(TRIGGER_HOUR).create();
+  globalThis.ScriptApp.newTrigger(TRIGGER_HANDLER).timeBased().everyDays(1).atHour(TRIGGER_HOUR).create();
+  assert.equal(triggersFor(store, TRIGGER_HANDLER).length, 2, 'precondition: two stale triggers');
+
+  setupDailyTrigger();
+
+  assert.equal(
+    triggersFor(store, TRIGGER_HANDLER).length,
+    1,
+    'after setup exactly one matching trigger remains'
+  );
+
+  cleanupScriptApp();
+});
+
+test('removeAllTriggers deletes matching triggers and preserves unrelated ones', () => {
+  const store = installScriptApp();
+  globalThis.ScriptApp.newTrigger(TRIGGER_HANDLER).timeBased().everyDays(1).atHour(TRIGGER_HOUR).create();
+  globalThis.ScriptApp.newTrigger(TRIGGER_HANDLER).timeBased().everyDays(1).atHour(TRIGGER_HOUR).create();
+  globalThis.ScriptApp.newTrigger('someOther').timeBased().everyDays(1).atHour(TRIGGER_HOUR).create();
+
+  removeAllTriggers();
+
+  assert.equal(triggersFor(store, TRIGGER_HANDLER).length, 0, 'all matching triggers removed');
+  assert.equal(triggersFor(store, 'someOther').length, 1, 'unrelated trigger preserved');
+
+  cleanupScriptApp();
 });

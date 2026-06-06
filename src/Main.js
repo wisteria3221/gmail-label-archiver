@@ -98,6 +98,47 @@ function archiveLabeledThreads() {
 }
 
 /**
+ * 日次トリガーを冪等にセットアップする（4.1, 4.2）。
+ *
+ * 1. `ScriptApp.getProjectTriggers()` を走査し、ハンドラが `TRIGGER_HANDLER`
+ *    （`archiveLabeledThreads`）の既存トリガーを全削除する（重複排除）。
+ * 2. その後、日次トリガーをちょうど 1 件作成する
+ *    （`everyDays(1).atHour(TRIGGER_HOUR)`）。
+ *
+ * Postcondition: `archiveLabeledThreads` を指す日次トリガーがちょうど 1 件存在
+ *（実行前の件数に依らず、2 回実行しても 1 件のまま）。
+ *
+ * @returns {void}
+ */
+function setupDailyTrigger() {
+  // 1. 既存の同一ハンドラトリガーを全削除（重複排除）。
+  removeAllTriggers();
+
+  // 2. 日次トリガーを 1 件だけ作成（4.1/4.2）。
+  ScriptApp.newTrigger(TRIGGER_HANDLER)
+    .timeBased()
+    .everyDays(1)
+    .atHour(TRIGGER_HOUR)
+    .create();
+}
+
+/**
+ * 同一ハンドラ（`TRIGGER_HANDLER`）のトリガーを全削除する（運用補助）。
+ * 無関係なハンドラのトリガーには手を触れない。
+ *
+ * @returns {void}
+ */
+function removeAllTriggers() {
+  const triggers = ScriptApp.getProjectTriggers();
+  for (let i = 0; i < triggers.length; i++) {
+    const trigger = triggers[i];
+    if (trigger.getHandlerFunction() === TRIGGER_HANDLER) {
+      ScriptApp.deleteTrigger(trigger);
+    }
+  }
+}
+
+/**
  * 1 行を標準ログへ出力する（5.4）。`console.log`（Node/GAS 双方）に加え、
  * GAS 環境で `Logger` が定義されていれば `Logger.log` にも出力する。
  *
@@ -127,5 +168,5 @@ function errorMessage(err) {
 
 // Node-only export guard: GAS では `module` が未定義のため評価されない。
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { archiveLabeledThreads };
+  module.exports = { archiveLabeledThreads, setupDailyTrigger, removeAllTriggers };
 }
