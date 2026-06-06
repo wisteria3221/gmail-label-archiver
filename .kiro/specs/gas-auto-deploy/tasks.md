@@ -10,7 +10,7 @@
   - _Requirements: 1.1, 1.2, 1.3, 2.1, 5.1_
   - _Boundary: Deploy Workflow_
 
-- [ ] 1.2 デプロイジョブの構築（認証展開と clasp によるソース同期）
+- [x] 1.2 デプロイジョブの構築（認証展開と clasp によるソース同期）
   - test ジョブの成功（`needs: test`）を条件にデプロイジョブを実行する
   - Secret `CLASPRC_JSON` を環境変数経由でランナー上の認証ファイルに展開し、コマンド行に認証情報を出さない
   - clasp v3（メジャー固定）で `push --force` を実行し、`src` を既存 `.clasp.json` の `scriptId` が指す GAS プロジェクトへ同期する（versioned deploy は行わない）

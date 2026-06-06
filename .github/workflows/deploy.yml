@@ -31,3 +31,37 @@ jobs:
 
       - name: Run tests
         run: npm test
+
+  # test 成功を条件にデプロイする（needs: test ゲート）。
+  # test 失敗時は本ジョブがスキップされ、ワークフロー全体が failure となる。
+  # 要件 2.2（成功時のみデプロイ）/ 2.3（失敗時はデプロイせず失敗終了）
+  deploy:
+    name: Deploy to GAS
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Secret を環境変数経由でランナー上の認証ファイルへ展開する。
+      # printf '%s' + 環境変数経由のため、認証情報がコマンド行やログに露出しない。
+      # 認証ファイルはジョブ終了で揮発し、リポジトリには永続化されない。
+      # 要件 4.1（Secrets から取得）/ 4.2（永続化しない）/ 4.3（展開後に実行）
+      - name: Write clasp credentials
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+        run: printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+
+      # clasp v3（メジャー固定）で push --force を実行し、src を既存
+      # .clasp.json の scriptId が指す GAS プロジェクトへ同期する。
+      # push のみ（versioned deploy は行わない）。認証不在/無効・push 失敗時は
+      # clasp が非0終了し、本ジョブが failure となる（|| true 等の抑制はしない）。
+      # 要件 3.1（src を反映）/ 3.2（非対話）/ 3.3（versioned deploy しない）
+      # / 3.4（既存 scriptId に従う）/ 4.4・5.3・5.4（失敗時 failure + ログ）/ 5.2（成功時 success）
+      - name: Push src to GAS
+        run: npx @google/clasp@3 push --force
