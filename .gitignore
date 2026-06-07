@@ -2,4 +2,5 @@ node_modules/
 .clasprc.json
 .DS_Store
 .claude/settings.local.json
-.kiro/
+.kiro/*
+!.kiro/steering/
