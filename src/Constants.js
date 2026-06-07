@@ -39,6 +39,9 @@ const TRIGGER_HANDLER = 'archiveLabeledThreads';
 /** 日次トリガーの実行時刻（時）。 */
 const TRIGGER_HOUR = 3;
 
+/** 親子ラベルの階層区切り文字。子孫判定の前方一致に使用。 */
+const LABEL_HIERARCHY_SEPARATOR = '/';
+
 // Node-only export guard: GAS では `module` が未定義のため評価されない。
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
@@ -52,5 +55,6 @@ if (typeof module !== 'undefined' && module.exports) {
     ARCHIVE_SEARCH_LIMIT,
     TRIGGER_HANDLER,
     TRIGGER_HOUR,
+    LABEL_HIERARCHY_SEPARATOR,
   };
 }

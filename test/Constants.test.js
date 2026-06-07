@@ -34,3 +34,7 @@ test('Constants: trigger handler and hour', () => {
   assert.ok(Number.isInteger(C.TRIGGER_HOUR), 'TRIGGER_HOUR must be an integer');
   assert.ok(C.TRIGGER_HOUR >= 0 && C.TRIGGER_HOUR <= 23, 'TRIGGER_HOUR must be in 0..23');
 });
+
+test('Constants: label hierarchy separator', () => {
+  assert.equal(C.LABEL_HIERARCHY_SEPARATOR, '/');
+});
