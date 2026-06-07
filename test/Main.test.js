@@ -6,23 +6,36 @@ const assert = require('node:assert/strict');
 const Constants = require('../src/Constants.js');
 Object.assign(globalThis, Constants);
 
+// 統合タスク（6.5）: archiveLabeledThreads は listUserLabelNames + expandRules も
+// 呼ぶ。expandRules は Config.js の実装をそのまま利用し、listUserLabelNames は
+// 各テストでスタブする（GmailApp 非依存に保つ）。
+const { expandRules } = require('../src/Config.js');
+globalThis.expandRules = expandRules;
+
 const { archiveLabeledThreads, setupDailyTrigger, removeAllTriggers } = require('../src/Main.js');
 
 /**
- * 各テストで globalThis 上の readArchiveRules / archiveRule を差し替える。
- * console.log / Logger を残さないよう、テスト後にクリーンアップする。
+ * 各テストで globalThis 上の readArchiveRules / archiveRule / listUserLabelNames
+ * を差し替える。console.log / Logger を残さないよう、テスト後にクリーンアップする。
+ * expandRules は実装（Config.js）を共有するため削除しない。
  */
 function cleanup() {
   delete globalThis.readArchiveRules;
   delete globalThis.archiveRule;
+  delete globalThis.listUserLabelNames;
   delete globalThis.Logger;
 }
 
 // --- 1.3: 有効ルール 0 件 → 何もせず正常終了 ---
 
-test('empty rules: archiveRule is never called and returns without throwing (1.3)', () => {
+test('empty rules: archiveRule and listUserLabelNames are never called, returns without throwing (1.3)', () => {
   let archiveCalls = 0;
+  let labelListCalls = 0;
   globalThis.readArchiveRules = () => [];
+  globalThis.listUserLabelNames = () => {
+    labelListCalls += 1;
+    return [];
+  };
   globalThis.archiveRule = () => {
     archiveCalls += 1;
     return { labelName: 'x', archivedCount: 0, candidateCount: 0 };
@@ -30,6 +43,11 @@ test('empty rules: archiveRule is never called and returns without throwing (1.3
 
   assert.doesNotThrow(() => archiveLabeledThreads());
   assert.equal(archiveCalls, 0, 'archiveRule must not be called when there are no rules');
+  assert.equal(
+    labelListCalls,
+    0,
+    'listUserLabelNames must NOT be called when there are 0 explicit rules (short-circuit, no Gmail round trip)'
+  );
 
   cleanup();
 });
@@ -46,6 +64,8 @@ test('ample budget: remaining decreases by previous rule archivedCount (5.1)', (
   const remainingArgs = [];
 
   globalThis.readArchiveRules = () => rules;
+  // 子孫ラベルなし: 展開しても明示ルールのみ（順序維持を確認）。
+  globalThis.listUserLabelNames = () => ['A', 'B', 'C'];
   globalThis.archiveRule = (rule, now, remaining) => {
     remainingArgs.push({ labelName: rule.labelName, remaining });
     assert.ok(now instanceof Date, 'now must be a Date');
@@ -77,6 +97,7 @@ test('budget exhaustion: later rules are skipped (5.1)', () => {
   const calledLabels = [];
 
   globalThis.readArchiveRules = () => rules;
+  globalThis.listUserLabelNames = () => ['A', 'B', 'C'];
   globalThis.archiveRule = (rule) => {
     calledLabels.push(rule.labelName);
     // First rule consumes the entire budget.
@@ -105,6 +126,7 @@ test('per-rule error: subsequent rule still processed, no throw (5.2)', () => {
   const calledLabels = [];
 
   globalThis.readArchiveRules = () => rules;
+  globalThis.listUserLabelNames = () => ['A', 'B', 'C'];
   globalThis.archiveRule = (rule) => {
     calledLabels.push(rule.labelName);
     if (rule.labelName === 'B') {
@@ -118,6 +140,94 @@ test('per-rule error: subsequent rule still processed, no throw (5.2)', () => {
     calledLabels,
     ['A', 'B', 'C'],
     'rule C must still be processed after rule B throws'
+  );
+
+  cleanup();
+});
+
+// --- 6.1: 親ラベル指定時、展開済みの子孫ルールも順次処理される ---
+
+test('expansion wired: descendant labels are expanded and processed (6.1)', () => {
+  // 明示ルールは親ラベル「Work」のみ。Gmail には子孫「Work/Project」が存在。
+  const rules = [{ labelName: 'Work', retentionDays: 30 }];
+  const calledLabels = [];
+
+  globalThis.readArchiveRules = () => rules;
+  globalThis.listUserLabelNames = () => ['Work', 'Work/Project', 'Unrelated'];
+  globalThis.archiveRule = (rule) => {
+    calledLabels.push(rule.labelName);
+    return { labelName: rule.labelName, archivedCount: 0, candidateCount: 0 };
+  };
+
+  archiveLabeledThreads();
+
+  assert.ok(
+    calledLabels.includes('Work'),
+    'explicit parent rule must be processed'
+  );
+  assert.ok(
+    calledLabels.includes('Work/Project'),
+    'expanded descendant rule must also be processed (6.1)'
+  );
+  assert.ok(
+    !calledLabels.includes('Unrelated'),
+    'unrelated label without an ancestor rule must NOT be processed'
+  );
+  assert.equal(calledLabels.length, 2, 'exactly parent + one descendant processed');
+
+  cleanup();
+});
+
+// --- 6.8: 実行全体で 1 つの seenThreadIds Set を全 archiveRule 呼び出しへ共有 ---
+
+test('seenThreadIds shared: same Set instance passed to every archiveRule call (6.8)', () => {
+  const rules = [
+    { labelName: 'Work', retentionDays: 30 },
+    { labelName: 'Home', retentionDays: 30 },
+  ];
+  const seenArgs = [];
+
+  globalThis.readArchiveRules = () => rules;
+  // Work には子孫が 1 つあり、合計 3 ルールへ展開される。
+  globalThis.listUserLabelNames = () => ['Work', 'Work/Sub', 'Home'];
+  globalThis.archiveRule = (rule, now, remaining, seenThreadIds) => {
+    seenArgs.push(seenThreadIds);
+    return { labelName: rule.labelName, archivedCount: 0, candidateCount: 0 };
+  };
+
+  archiveLabeledThreads();
+
+  assert.equal(seenArgs.length, 3, 'archiveRule called once per expanded rule');
+  assert.ok(seenArgs[0] instanceof Set, '4th arg must be a Set');
+  for (let i = 1; i < seenArgs.length; i++) {
+    assert.strictEqual(
+      seenArgs[i],
+      seenArgs[0],
+      'every archiveRule call must receive the SAME Set instance (6.8)'
+    );
+  }
+
+  cleanup();
+});
+
+// --- ラベル取得失敗 → ログして正常終了（再throwしない、archiveRule 未呼び出し） ---
+
+test('listUserLabelNames failure: archiveLabeledThreads does not throw, archiveRule never called', () => {
+  let archiveCalls = 0;
+  globalThis.readArchiveRules = () => [{ labelName: 'Work', retentionDays: 30 }];
+  globalThis.listUserLabelNames = () => {
+    throw new Error('Gmail label fetch failed');
+  };
+  globalThis.archiveRule = () => {
+    archiveCalls += 1;
+    return { labelName: 'x', archivedCount: 0, candidateCount: 0 };
+  };
+
+  assert.doesNotThrow(() => archiveLabeledThreads());
+  assert.equal(
+    archiveCalls,
+    0,
+    'archiveRule must not run when label fetch fails (log and return normally)'
   );
 
   cleanup();
