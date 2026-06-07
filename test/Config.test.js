@@ -8,7 +8,7 @@ const Constants = require('../src/Constants.js');
 // free-variable references resolve under Node (GAS shares one global scope).
 Object.assign(globalThis, Constants);
 
-const { validateRow, readArchiveRules } = require('../src/Config.js');
+const { validateRow, readArchiveRules, expandRules } = require('../src/Config.js');
 
 /**
  * Install per-test mocks of the GAS global services on globalThis.
@@ -215,4 +215,86 @@ test('readArchiveRules: header schema mismatch throws (configuration error)', ()
     },
   });
   assert.throws(readArchiveRules);
+});
+
+// --- expandRules (6.1-6.6) ---
+
+/** Sort by labelName for order-insensitive deep comparison. */
+function byLabel(a, b) {
+  return a.labelName < b.labelName ? -1 : a.labelName > b.labelName ? 1 : 0;
+}
+
+test('expandRules: single-level descendant inherits parent retention (6.1, 6.4)', () => {
+  const rules = [{ labelName: '仕事', retentionDays: 30 }];
+  const allLabelNames = ['仕事', '仕事/案件A'];
+  const result = expandRules(rules, allLabelNames).sort(byLabel);
+  assert.deepEqual(result, [
+    { labelName: '仕事', retentionDays: 30 },
+    { labelName: '仕事/案件A', retentionDays: 30 },
+  ]);
+});
+
+test('expandRules: multi-level descendant covered by prefix (6.2, 6.4)', () => {
+  const rules = [{ labelName: '仕事', retentionDays: 30 }];
+  const allLabelNames = ['仕事', '仕事/案件A', '仕事/案件A/詳細'];
+  const result = expandRules(rules, allLabelNames).sort(byLabel);
+  assert.deepEqual(result, [
+    { labelName: '仕事', retentionDays: 30 },
+    { labelName: '仕事/案件A', retentionDays: 30 },
+    { labelName: '仕事/案件A/詳細', retentionDays: 30 },
+  ]);
+});
+
+test('expandRules: false-positive avoidance — 仕事 does not match 仕事中 (6.2)', () => {
+  const rules = [{ labelName: '仕事', retentionDays: 30 }];
+  const allLabelNames = ['仕事', '仕事中'];
+  const result = expandRules(rules, allLabelNames).sort(byLabel);
+  assert.deepEqual(result, [{ labelName: '仕事', retentionDays: 30 }]);
+});
+
+test('expandRules: explicit child row takes precedence over inheritance (6.5)', () => {
+  const rules = [
+    { labelName: '仕事', retentionDays: 30 },
+    { labelName: '仕事/案件A', retentionDays: 7 },
+  ];
+  const allLabelNames = ['仕事', '仕事/案件A'];
+  const result = expandRules(rules, allLabelNames).sort(byLabel);
+  assert.deepEqual(result, [
+    { labelName: '仕事', retentionDays: 30 },
+    { labelName: '仕事/案件A', retentionDays: 7 },
+  ]);
+});
+
+test('expandRules: longest-prefix ancestor is chosen for descendant (決定 1)', () => {
+  const rules = [
+    { labelName: '仕事', retentionDays: 30 },
+    { labelName: '仕事/案件', retentionDays: 10 },
+  ];
+  const allLabelNames = ['仕事', '仕事/案件', '仕事/案件/X'];
+  const result = expandRules(rules, allLabelNames).sort(byLabel);
+  assert.deepEqual(result, [
+    { labelName: '仕事', retentionDays: 30 },
+    { labelName: '仕事/案件', retentionDays: 10 },
+    { labelName: '仕事/案件/X', retentionDays: 10 },
+  ]);
+});
+
+test('expandRules: no descendants returns only explicit rules (6.6)', () => {
+  const rules = [{ labelName: '個人', retentionDays: 5 }];
+  const allLabelNames = ['個人', '仕事', '仕事/案件A'];
+  const result = expandRules(rules, allLabelNames).sort(byLabel);
+  assert.deepEqual(result, [{ labelName: '個人', retentionDays: 5 }]);
+});
+
+test('expandRules: result is unique by labelName (6.3)', () => {
+  const rules = [{ labelName: '仕事', retentionDays: 30 }];
+  // Duplicate label names in input must be absorbed by dedupe.
+  const allLabelNames = ['仕事', '仕事/案件A', '仕事/案件A'];
+  const result = expandRules(rules, allLabelNames);
+  const names = result.map((r) => r.labelName);
+  assert.equal(names.length, new Set(names).size);
+  assert.deepEqual(result.sort(byLabel), [
+    { labelName: '仕事', retentionDays: 30 },
+    { labelName: '仕事/案件A', retentionDays: 30 },
+  ]);
 });

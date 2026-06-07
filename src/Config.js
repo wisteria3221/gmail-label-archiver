@@ -133,7 +133,85 @@ function findHeaderColumn_(header, name) {
   return -1;
 }
 
+/**
+ * 明示ルールを親ラベルとみなし、配下の子孫ラベルへ展開した ArchiveRule[] を返す純粋関数。
+ * 副作用なし・GmailApp 非依存（ラベル一覧は引数で受け取る、テスト容易）。
+ *
+ * ルール:
+ * - 明示ルール（rules）は labelName キーで常に保持・優先する（6.5）。
+ * - allLabelNames のうち明示済みでないラベル L について、L が「<R.labelName>/」で
+ *   始まる明示ルール R をすべて祖先候補とし（6.1/6.2、多階層を網羅）、最長の
+ *   R.labelName を持つ親を採用する（決定 1）。採用した親の retentionDays を継承し、
+ *   { labelName: L, retentionDays: 親.retentionDays } を追加する（6.4）。
+ * - 結果は labelName キーで一意化する。子孫が 1 件も無ければ明示ルールのみ返す（6.6）。
+ *
+ * @param {ArchiveRule[]} rules 設定シート由来の検証済み明示ルール
+ * @param {string[]} allLabelNames Gmail の全ユーザーラベル名（listUserLabelNames の戻り値）
+ * @returns {ArchiveRule[]} 展開・一意化済みルール（明示行 ＋ 継承された子孫行）
+ */
+function expandRules(rules, allLabelNames) {
+  // (a) 明示ルールを labelName キーで保持。常に優先し、継承で上書きしない（6.5）。
+  // 同一 labelName が複数あれば先勝ち（一意化）。
+  const byLabelName = {};
+  for (let i = 0; i < rules.length; i++) {
+    const rule = rules[i];
+    if (!Object.prototype.hasOwnProperty.call(byLabelName, rule.labelName)) {
+      byLabelName[rule.labelName] = {
+        labelName: rule.labelName,
+        retentionDays: rule.retentionDays,
+      };
+    }
+  }
+
+  // (b) 各ラベル L について、明示済みでなければ祖先（最長プレフィックス）を探して継承。
+  for (let j = 0; j < allLabelNames.length; j++) {
+    const labelName = allLabelNames[j];
+
+    // 明示行があるラベルはスキップ（明示優先・継承しない、6.5）。
+    if (Object.prototype.hasOwnProperty.call(byLabelName, labelName)) {
+      continue;
+    }
+
+    // 祖先探索: L が「<R.labelName> + 区切り」で始まる明示ルール R のうち
+    // 最長 R.labelName を採用（決定 1）。区切り付き前方一致で誤判定を防ぐ（6.2）。
+    let bestAncestor = null;
+    for (let k = 0; k < rules.length; k++) {
+      const candidate = rules[k];
+      const prefix = candidate.labelName + LABEL_HIERARCHY_SEPARATOR;
+      if (labelName.indexOf(prefix) === 0) {
+        if (
+          bestAncestor === null ||
+          candidate.labelName.length > bestAncestor.labelName.length
+        ) {
+          bestAncestor = candidate;
+        }
+      }
+    }
+
+    // (c)(d) 祖先が見つかればその保持日数を継承して追加（6.1/6.4）。
+    // 一意化のため byLabelName に格納（重複ラベル名は先勝ちで吸収）。
+    if (
+      bestAncestor !== null &&
+      !Object.prototype.hasOwnProperty.call(byLabelName, labelName)
+    ) {
+      byLabelName[labelName] = {
+        labelName: labelName,
+        retentionDays: bestAncestor.retentionDays,
+      };
+    }
+  }
+
+  // (e) labelName で一意化された結果を配列化して返す。
+  // 子孫が無ければ明示ルールのみが残る（6.6）。
+  const result = [];
+  const keys = Object.keys(byLabelName);
+  for (let m = 0; m < keys.length; m++) {
+    result.push(byLabelName[keys[m]]);
+  }
+  return result;
+}
+
 // Node-only export guard: GAS では `module` が未定義のため評価されない。
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { validateRow, readArchiveRules };
+  module.exports = { validateRow, readArchiveRules, expandRules };
 }
