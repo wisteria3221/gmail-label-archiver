@@ -160,7 +160,25 @@ function logSummary(labelName, archivedCount, candidateCount) {
   }
 }
 
+/**
+ * Gmail の全ユーザー作成ラベル名を返す薄いラッパ（`GmailApp.getUserLabels`、6.1）。
+ * `getUserLabels` はユーザー作成ラベルのみを返す（システムラベルは含まれない）ため
+ * 追加のフィルタは不要。ラベルオブジェクト配列をラベル名文字列配列へ変換するだけの
+ * 薄いラッパ（余計なロジックを持たない）。
+ *
+ * @returns {string[]} ユーザー作成ラベル名の配列（システムラベルは含まない）
+ */
+function listUserLabelNames() {
+  return GmailApp.getUserLabels().map((l) => l.getName());
+}
+
 // Node-only export guard: GAS では `module` が未定義のため評価されない。
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { buildQuery, isOlderThan, hasStar, archiveRule };
+  module.exports = {
+    buildQuery,
+    isOlderThan,
+    hasStar,
+    archiveRule,
+    listUserLabelNames,
+  };
 }

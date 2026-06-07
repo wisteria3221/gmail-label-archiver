@@ -11,6 +11,7 @@ const {
   isOlderThan,
   hasStar,
   archiveRule,
+  listUserLabelNames,
 } = require('../src/Archiver.js');
 
 const DAY_MS = 86400000;
@@ -266,4 +267,21 @@ test('archiveRule: returns correct ArchiveResult shape', () => {
   assert.equal(result.labelName, 'Newsletter');
   assert.equal(typeof result.archivedCount, 'number');
   assert.equal(typeof result.candidateCount, 'number');
+});
+
+// --- listUserLabelNames (6.1) ---
+
+test('listUserLabelNames: maps label objects to name strings (6.1)', () => {
+  globalThis.GmailApp = {
+    getUserLabels: () => [
+      { getName: () => '仕事' },
+      { getName: () => '仕事/案件A' },
+    ],
+  };
+  assert.deepEqual(listUserLabelNames(), ['仕事', '仕事/案件A']);
+});
+
+test('listUserLabelNames: empty label list -> empty array (6.1)', () => {
+  globalThis.GmailApp = { getUserLabels: () => [] };
+  assert.deepEqual(listUserLabelNames(), []);
 });
