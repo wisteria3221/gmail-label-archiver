@@ -51,7 +51,7 @@ TypeScript は使わず、純粋な JavaScript + JSDoc で型を表現する。`
 ## 重要な技術的判断
 
 - **GAS グローバルスコープ前提**: モジュール import せず top-level 宣言で関数・定数を共有する。各ファイル末尾の `module.exports` は `typeof module !== 'undefined'` ガードで囲み、Node のテストからのみ `require()` 可能にする（GAS では評価されない）。
-- **権威的再判定**: Gmail 検索（`label:... in:inbox -is:starred older_than:Nd`）は候補抽出にのみ使い、確定は `isOlderThan`（厳密超過）＋ `!hasStar` でコード側が行う。
+- **権威的再判定**: Gmail 検索（`label:... in:inbox -is:starred older_than:Nd`）は候補抽出にのみ使い、確定は `isOlderThan`（厳密超過）＋ `!hasStar` でコード側が行う。検索条件はメッセージ単位で効き除外対象が先頭を占めうるため、検索はページングし、走査件数は `ARCHIVE_SCAN_LIMIT_PER_RULE` で打ち切る。アーカイブは全ページ走査後にまとめて行う（offset ずれ防止）。
 - **実行予算管理**: `MAX_THREADS_PER_RUN`（実行全体上限）を残予算として各ルールに渡し、`ARCHIVE_BATCH_SIZE` 単位でアーカイブ。超過分は処理せず次回へ持ち越す。
 - **フェイルファスト vs 継続**: 構成不備（Script Property 未設定・シート不在・ヘッダ不一致）は例外で即停止しログして正常終了。ルール単位のエラーは記録して次ルールへ継続。
 - **CI からの scriptId 注入**: コミット版 `.clasp.json` の `scriptId` は placeholder。GitHub Actions が Secret（`GAS_SCRIPT_ID` / `CLASPRC_JSON`）から認証情報と実 scriptId を注入し `clasp push --force` で同期する。実 scriptId・認証情報はリポジトリに永続化しない。

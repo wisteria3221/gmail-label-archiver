@@ -33,6 +33,13 @@ const ARCHIVE_BATCH_SIZE = 100;
 /** `GmailApp.search` の 1 回あたり上限（500 件）。 */
 const ARCHIVE_SEARCH_LIMIT = 500;
 
+/**
+ * 1 ルールあたりに走査（検索取得＋再判定）するスレッド数の上限。
+ * 除外対象が検索結果の先頭を占めても後続ページへ進めるようページングするが、
+ * 実行時間（GAS 6 分制限）を抑えるためこの件数で打ち切る。
+ */
+const ARCHIVE_SCAN_LIMIT_PER_RULE = 1000;
+
 /** 日次トリガーが呼び出すエントリ関数名。 */
 const TRIGGER_HANDLER = 'archiveLabeledThreads';
 
@@ -53,6 +60,7 @@ if (typeof module !== 'undefined' && module.exports) {
     MAX_THREADS_PER_RUN,
     ARCHIVE_BATCH_SIZE,
     ARCHIVE_SEARCH_LIMIT,
+    ARCHIVE_SCAN_LIMIT_PER_RULE,
     TRIGGER_HANDLER,
     TRIGGER_HOUR,
     LABEL_HIERARCHY_SEPARATOR,

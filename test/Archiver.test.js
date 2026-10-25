@@ -93,18 +93,26 @@ function fakeThread(lastDateISO, starred) {
 
 // Install a GmailApp mock that exposes ONLY search + moveThreadsToArchive.
 // If archiveRule called any other (destructive) method, it would throw.
+// `calls` records the order of search / archive calls (for pagination checks).
 function installGmail(searchResults) {
   const archivedBatches = [];
+  installGmail.calls = [];
   globalThis.GmailApp = {
     search: (q, start, max) => {
       installGmail._lastSearch = { q, start, max };
-      return searchResults.slice(0, max);
+      installGmail.calls.push({ type: 'search', start, max });
+      return searchResults.slice(start, start + max);
     },
     moveThreadsToArchive: (threads) => {
+      installGmail.calls.push({ type: 'archive' });
       archivedBatches.push(threads);
     },
   };
   return archivedBatches;
+}
+
+function recentUnstarred() {
+  return fakeThread(new Date(RULE_NOW.getTime() - 1 * DAY_MS).toISOString(), false);
 }
 
 function oldUnstarred() {
@@ -189,20 +197,134 @@ test('archiveRule: remaining cap -> archivedCount <= remaining, carry-over (5.1)
     2
   );
   assert.equal(result.archivedCount, 2);
-  // search is capped to min(remaining, ARCHIVE_SEARCH_LIMIT)
-  assert.equal(
-    installGmail._lastSearch.max,
-    Math.min(2, ARCHIVE_SEARCH_LIMIT)
-  );
   // only 2 actually archived
   const total = batches.reduce((n, b) => n + b.length, 0);
   assert.equal(total, 2);
 });
 
-test('archiveRule: search max == min(remaining, ARCHIVE_SEARCH_LIMIT) when remaining huge', () => {
+test('archiveRule: each search page requests ARCHIVE_SEARCH_LIMIT regardless of remaining', () => {
   installGmail([]);
-  archiveRule({ labelName: 'Newsletter', retentionDays: 30 }, RULE_NOW, 100000);
+  archiveRule({ labelName: 'Newsletter', retentionDays: 30 }, RULE_NOW, 2);
+  assert.equal(installGmail._lastSearch.start, 0);
   assert.equal(installGmail._lastSearch.max, ARCHIVE_SEARCH_LIMIT);
+});
+
+// --- archiveRule pagination: 除外対象が検索先頭を占めても後続ページの対象へ届く ---
+
+test('archiveRule: paginates past a full page of non-qualifying threads to reach targets', () => {
+  // 先頭 1 ページ分は「最近の返信あり」で除外対象、その後ろに本来の対象がある。
+  const results = [];
+  for (let i = 0; i < ARCHIVE_SEARCH_LIMIT; i++) results.push(recentUnstarred());
+  const old1 = oldUnstarred();
+  const old2 = oldUnstarred();
+  results.push(old1, old2);
+  const batches = installGmail(results);
+
+  const result = archiveRule(
+    { labelName: 'Newsletter', retentionDays: 30 },
+    RULE_NOW,
+    300
+  );
+
+  assert.equal(result.archivedCount, 2);
+  assert.equal(result.candidateCount, ARCHIVE_SEARCH_LIMIT + 2);
+  assert.deepEqual(batches.flat(), [old1, old2]);
+  const searches = installGmail.calls.filter((c) => c.type === 'search');
+  assert.deepEqual(
+    searches.map((c) => c.start),
+    [0, ARCHIVE_SEARCH_LIMIT]
+  );
+});
+
+test('archiveRule: small remaining still reaches targets behind non-qualifying threads', () => {
+  const results = [recentUnstarred(), recentUnstarred(), recentUnstarred()];
+  const old1 = oldUnstarred();
+  results.push(old1);
+  const batches = installGmail(results);
+
+  const result = archiveRule(
+    { labelName: 'Newsletter', retentionDays: 30 },
+    RULE_NOW,
+    1
+  );
+
+  assert.equal(result.archivedCount, 1);
+  assert.deepEqual(batches.flat(), [old1]);
+});
+
+test('archiveRule: stops searching once remaining targets are confirmed', () => {
+  const results = [];
+  for (let i = 0; i < ARCHIVE_SEARCH_LIMIT * 2; i++) results.push(oldUnstarred());
+  installGmail(results);
+
+  const result = archiveRule(
+    { labelName: 'Newsletter', retentionDays: 30 },
+    RULE_NOW,
+    3
+  );
+
+  assert.equal(result.archivedCount, 3);
+  const searches = installGmail.calls.filter((c) => c.type === 'search');
+  assert.equal(searches.length, 1, 'no further page once remaining is satisfied');
+});
+
+test('archiveRule: scanning is bounded by ARCHIVE_SCAN_LIMIT_PER_RULE', () => {
+  const results = [];
+  for (let i = 0; i < ARCHIVE_SCAN_LIMIT_PER_RULE + ARCHIVE_SEARCH_LIMIT; i++) {
+    results.push(recentUnstarred());
+  }
+  results.push(oldUnstarred());
+  const batches = installGmail(results);
+
+  const result = archiveRule(
+    { labelName: 'Newsletter', retentionDays: 30 },
+    RULE_NOW,
+    300
+  );
+
+  assert.equal(result.archivedCount, 0);
+  assert.equal(result.candidateCount, ARCHIVE_SCAN_LIMIT_PER_RULE);
+  assert.equal(batches.length, 0);
+  const searches = installGmail.calls.filter((c) => c.type === 'search');
+  const requested = searches.reduce((n, c) => n + c.max, 0);
+  assert.ok(
+    requested <= ARCHIVE_SCAN_LIMIT_PER_RULE,
+    'must not request more threads than the per-rule scan limit'
+  );
+});
+
+test('archiveRule: archives only after all search pages are fetched (keeps offsets stable)', () => {
+  // アーカイブで in:inbox から外れると後続ページの offset がずれるため、
+  // 全ページの走査が終わってからアーカイブする。
+  const results = [];
+  for (let i = 0; i < ARCHIVE_SEARCH_LIMIT; i++) results.push(oldUnstarred());
+  for (let i = 0; i < 10; i++) results.push(oldUnstarred());
+  installGmail(results);
+
+  archiveRule({ labelName: 'Newsletter', retentionDays: 30 }, RULE_NOW, 300);
+
+  const types = installGmail.calls.map((c) => c.type);
+  const lastSearch = types.lastIndexOf('search');
+  const firstArchive = types.indexOf('archive');
+  assert.ok(firstArchive > lastSearch, 'no archive call may precede a search call');
+});
+
+test('archiveRule: duplicate thread across pages is archived only once', () => {
+  const dup = oldUnstarredWithId('dup');
+  const results = [];
+  for (let i = 0; i < ARCHIVE_SEARCH_LIMIT - 1; i++) results.push(recentUnstarred());
+  results.push(dup, dup);
+  const batches = installGmail(results);
+
+  const result = archiveRule(
+    { labelName: 'Newsletter', retentionDays: 30 },
+    RULE_NOW,
+    300,
+    new Set()
+  );
+
+  assert.equal(result.archivedCount, 1);
+  assert.deepEqual(batches.flat(), [dup]);
 });
 
 test('archiveRule: remaining <= 0 -> 0 archived, search NOT called (5.1)', () => {

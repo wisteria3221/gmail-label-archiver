@@ -77,15 +77,21 @@ function hasStar(thread) {
  * 1 ルール分の対象を抽出し、残予算の範囲内で標準アーカイブする。
  *
  * 1. 残予算 `remaining ≤ 0` なら検索せず空動作（予算枯渇、5.1）。
- * 2. `buildQuery(rule)` でクエリを生成し、`min(remaining, ARCHIVE_SEARCH_LIMIT)`
- *    件まで `GmailApp.search` で候補を取得（design Implementation Notes）。
+ * 2. `buildQuery(rule)` でクエリを生成し、`ARCHIVE_SEARCH_LIMIT` 件ずつ
+ *    `GmailApp.search` でページングして候補を取得する。検索の `older_than` /
+ *    `-is:starred` はメッセージ単位で効くため、「最近の返信がある」「一部だけ
+ *    スター付き」のスレッドもヒットし、新しい順の先頭を占めうる。先頭ページだけ
+ *    では後続の本来の対象へ届かないため、次ページへ進む。
+ *    確定対象が `remaining` 件に達した時点、検索結果が尽きた時点、または走査件数が
+ *    `ARCHIVE_SCAN_LIMIT_PER_RULE` に達した時点で打ち切る。
  * 3. 候補をコード側で権威的に再判定（2.2/2.5/2.6/6.8）：
  *    最新メッセージ日時が保持日数を超え（`isOlderThan`）かつ非スター（`!hasStar`）
  *    かつ `seenThreadIds` に未出のスレッドのみ確定対象とする（検索の近似フィルタを
- *    補正し、親子両ラベル付きスレッドの実行内重複を防ぐ）。
- * 4. 確定対象を残予算 `remaining` 件まで採用（`archivedCount ≤ remaining`、5.1）。
- *    採用した各スレッドの ID を `seenThreadIds` に追記する（6.8）。
- * 5. `ARCHIVE_BATCH_SIZE`（100）単位で `GmailApp.moveThreadsToArchive` を呼ぶ。
+ *    補正し、親子両ラベル付きスレッドやページ間の重複を防ぐ）。
+ *    確定した各スレッドの ID を `seenThreadIds` に追記する（6.8）。
+ * 4. 確定対象は残予算 `remaining` 件まで（`archivedCount ≤ remaining`、5.1）。
+ * 5. 全ページの走査後に `ARCHIVE_BATCH_SIZE`（100）単位で `GmailApp.moveThreadsToArchive`
+ *    を呼ぶ（走査途中でアーカイブすると `in:inbox` から外れて offset がずれるため）。
  *    標準アーカイブのみ（削除・既読変更・他ラベル変更は行わない、3.1–3.3）。
  * 6. 確定対象 0 件（ラベル不在で検索 0 件含む）なら `moveThreadsToArchive` を
  *    呼ばずに `archivedCount` 0 で返す（2.4/3.4）。
@@ -97,7 +103,7 @@ function hasStar(thread) {
  * @param {Set<string>} [seenThreadIds] 実行全体で共有する処理済みスレッド ID 集合（6.8）。
  *   省略時はローカルな空 `Set` で代替するため、従来どおりの 3 引数挙動になる。
  *   既出 ID のスレッドは確定対象から除外し、アーカイブしたスレッド ID を追記する。
- * @returns {ArchiveResult}
+ * @returns {ArchiveResult} `candidateCount` は走査した（検索で取得した）候補の総数
  * @throws {Error} 検索・アーカイブ API が回復不能な失敗をした場合（呼び出し側でルール単位に捕捉）
  */
 function archiveRule(rule, now, remaining, seenThreadIds) {
@@ -109,39 +115,45 @@ function archiveRule(rule, now, remaining, seenThreadIds) {
     return { labelName: rule.labelName, archivedCount: 0, candidateCount: 0 };
   }
 
-  // 2. クエリ生成＋残予算の範囲で検索（GmailApp.search 上限 500）。
+  // 2–4. ページングしながら権威的再判定（最新日時超過 かつ 非スター かつ
+  //      seenThreadIds 未出、2.2/2.5/2.6/6.8）。getId が無いモック（3 引数の既存
+  //      テスト）でも壊れないよう存在ガードする。
   const query = buildQuery(rule);
-  const searchMax = Math.min(remaining, ARCHIVE_SEARCH_LIMIT);
-  const candidates = GmailApp.search(query, 0, searchMax);
-  const candidateCount = candidates.length;
+  const targets = [];
+  let candidateCount = 0;
+  while (
+    targets.length < remaining &&
+    candidateCount < ARCHIVE_SCAN_LIMIT_PER_RULE
+  ) {
+    const pageSize = Math.min(
+      ARCHIVE_SEARCH_LIMIT,
+      ARCHIVE_SCAN_LIMIT_PER_RULE - candidateCount
+    );
+    const page = GmailApp.search(query, candidateCount, pageSize);
+    candidateCount += page.length;
 
-  // 3. コード側の権威的再判定（最新日時超過 かつ 非スター かつ seenThreadIds 未出、
-  //    2.2/2.5/2.6/6.8）。getId が無いモック（3 引数の既存テスト）でも壊れないよう
-  //    存在ガードする。
-  const confirmed = [];
-  for (let i = 0; i < candidates.length; i++) {
-    const thread = candidates[i];
-    const id = thread.getId ? thread.getId() : undefined;
-    if (
-      isOlderThan(thread.getLastMessageDate(), rule.retentionDays, now) &&
-      !hasStar(thread) &&
-      !(id !== undefined && seenThreadIds.has(id))
-    ) {
-      confirmed.push(thread);
+    for (let i = 0; i < page.length && targets.length < remaining; i++) {
+      const thread = page[i];
+      const id = thread.getId ? thread.getId() : undefined;
+      if (
+        isOlderThan(thread.getLastMessageDate(), rule.retentionDays, now) &&
+        !hasStar(thread) &&
+        !(id !== undefined && seenThreadIds.has(id))
+      ) {
+        targets.push(thread);
+        if (id !== undefined) {
+          seenThreadIds.add(id);
+        }
+      }
+    }
+
+    // 検索結果が尽きた（最終ページ）なら打ち切り。
+    if (page.length < pageSize) {
+      break;
     }
   }
 
-  // 4. 残予算まで採用（archivedCount ≤ remaining、超過分は次回持ち越し、5.1）。
-  //    採用したスレッド ID を seenThreadIds に追記し、後続ルールでの二重計数を防ぐ（6.8）。
-  const targets = confirmed.slice(0, remaining);
-  for (let i = 0; i < targets.length; i++) {
-    const id = targets[i].getId ? targets[i].getId() : undefined;
-    if (id !== undefined) {
-      seenThreadIds.add(id);
-    }
-  }
-
-  // 5–6. 100 件単位で標準アーカイブ。対象 0 件なら呼ばない（2.4/3.4）。
+  // 5–6. 全ページ走査後に 100 件単位で標準アーカイブ。対象 0 件なら呼ばない（2.4/3.4）。
   for (let i = 0; i < targets.length; i += ARCHIVE_BATCH_SIZE) {
     GmailApp.moveThreadsToArchive(targets.slice(i, i + ARCHIVE_BATCH_SIZE));
   }

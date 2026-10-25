@@ -17,7 +17,7 @@ Gmail の指定ラベルが付いたスレッドを、ラベルごとに設定�
 日次トリガー（または手動実行）で `archiveLabeledThreads` が呼ばれ、以下を実行します。
 
 1. **設定読取** — Script Property が指すスプレッドシートを読み、各行を検証して有効なルール（ラベル名・保持日数）を取得。構成不備（ID 未設定・シート不在・ヘッダ不一致）はログに記録して安全に終了。
-2. **ルールごとに処理** — 各ラベルについて `label:"<ラベル名>" in:inbox -is:starred older_than:<保持日数>d` で候補を検索。
+2. **ルールごとに処理** — 各ラベルについて `label:"<ラベル名>" in:inbox -is:starred older_than:<保持日数>d` で候補を検索。検索条件はメッセージ単位で効くため（最近の返信があるスレッド等もヒットする）、`ARCHIVE_SEARCH_LIMIT` 件ずつページングし、1 ルールあたり最大 `ARCHIVE_SCAN_LIMIT_PER_RULE` 件まで走査する。
 3. **権威的再判定** — 候補のうち「最新メッセージが保持日数を厳密に超える」かつ「スター無し」のスレッドだけを確定対象にする。
 4. **バッチアーカイブ** — 確定対象を 100 件単位で `moveThreadsToArchive`。実行全体の残予算の範囲内のみ処理し、超過分は次回へ持ち越し。
 5. **サマリ出力** — 処理ルール数・ルール別件数・エラー数・残予算を実行ログへ出力。ルール単位のエラーは記録のうえ次のルールへ継続。
@@ -102,7 +102,8 @@ npm test   # node --test で純粋ロジックの単体テストを実行
 |---|---|---|
 | `MAX_THREADS_PER_RUN` | 300 | 1 回の実行全体で処理するスレッド数の上限 |
 | `ARCHIVE_BATCH_SIZE` | 100 | `moveThreadsToArchive` の 1 回あたり件数 |
-| `ARCHIVE_SEARCH_LIMIT` | 500 | `GmailApp.search` の 1 回あたり上限 |
+| `ARCHIVE_SEARCH_LIMIT` | 500 | `GmailApp.search` の 1 回あたり上限（ページサイズ） |
+| `ARCHIVE_SCAN_LIMIT_PER_RULE` | 1000 | 1 ルールあたりに走査する候補スレッド数の上限（実行時間対策） |
 | `TRIGGER_HOUR` | 3 | 日次トリガーの実行時刻（時） |
 | `DEFAULT_SHEET_NAME` | `settings` | シート名未指定時の既定シート名 |
 

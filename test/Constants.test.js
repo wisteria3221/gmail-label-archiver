@@ -20,6 +20,7 @@ test('Constants: numeric caps have exact values', () => {
   assert.equal(C.MAX_THREADS_PER_RUN, 300);
   assert.equal(C.ARCHIVE_BATCH_SIZE, 100);
   assert.equal(C.ARCHIVE_SEARCH_LIMIT, 500);
+  assert.equal(C.ARCHIVE_SCAN_LIMIT_PER_RULE, 1000);
 });
 
 test('Constants: caps respect GmailApp API limits', () => {
@@ -27,6 +28,11 @@ test('Constants: caps respect GmailApp API limits', () => {
   assert.ok(C.ARCHIVE_BATCH_SIZE <= 100, 'ARCHIVE_BATCH_SIZE must be <= 100');
   // GmailApp.search returns at most 500 threads per call.
   assert.ok(C.ARCHIVE_SEARCH_LIMIT <= 500, 'ARCHIVE_SEARCH_LIMIT must be <= 500');
+  // 1 ルールの走査上限は少なくとも 1 ページ分以上（ページングが機能するため）。
+  assert.ok(
+    C.ARCHIVE_SCAN_LIMIT_PER_RULE >= C.ARCHIVE_SEARCH_LIMIT,
+    'ARCHIVE_SCAN_LIMIT_PER_RULE must be >= ARCHIVE_SEARCH_LIMIT'
+  );
 });
 
 test('Constants: trigger handler and hour', () => {
