@@ -44,3 +44,19 @@ test('Constants: trigger handler and hour', () => {
 test('Constants: label hierarchy separator', () => {
   assert.equal(C.LABEL_HIERARCHY_SEPARATOR, '/');
 });
+
+test('Constants: 同期で追加する列ヘッダ', () => {
+  assert.equal(C.HEADER_TARGET, '対象');
+  assert.equal(C.HEADER_APPLIED_DAYS, '適用日数');
+  assert.equal(C.HEADER_STATUS, '状態');
+});
+
+test('Constants: 状態列に表示する文言', () => {
+  assert.equal(C.STATUS_MISSING, 'Gmail に存在しない');
+  assert.equal(C.STATUS_INVALID_DAYS, '保持日数が無効（対象外）');
+  assert.equal(C.STATUS_DUPLICATE, '重複（別の行の設定を適用）');
+});
+
+test('Constants: 同期ロックの待ち時間', () => {
+  assert.equal(C.SYNC_LOCK_TIMEOUT_MS, 30000);
+});

@@ -24,6 +24,27 @@ const HEADER_LABEL = 'ラベル名';
 /** 設定シートの保持日数列ヘッダ。 */
 const HEADER_DAYS = '保持日数';
 
+/** 設定シートの対象列ヘッダ（チェックボックス）。 */
+const HEADER_TARGET = '対象';
+
+/** 設定シートの適用日数列ヘッダ（同期が書き込む表示専用列）。 */
+const HEADER_APPLIED_DAYS = '適用日数';
+
+/** 設定シートの状態列ヘッダ（同期が書き込む表示専用列）。 */
+const HEADER_STATUS = '状態';
+
+/** 状態列の文言: シート上のラベルが Gmail に存在しない。 */
+const STATUS_MISSING = 'Gmail に存在しない';
+
+/** 状態列の文言: 対象だが保持日数が無効なためルールにならない。 */
+const STATUS_INVALID_DAYS = '保持日数が無効（対象外）';
+
+/** 状態列の文言: 同じラベルの行が重複し、別の行の設定が適用される。 */
+const STATUS_DUPLICATE = '重複（別の行の設定を適用）';
+
+/** ラベル同期のスクリプトロック取得の待ち時間（ミリ秒）。 */
+const SYNC_LOCK_TIMEOUT_MS = 30000;
+
 /** 1 回の実行全体（全ルール合算）で処理するスレッド数の上限。 */
 const MAX_THREADS_PER_RUN = 300;
 
@@ -57,6 +78,13 @@ if (typeof module !== 'undefined' && module.exports) {
     DEFAULT_SHEET_NAME,
     HEADER_LABEL,
     HEADER_DAYS,
+    HEADER_TARGET,
+    HEADER_APPLIED_DAYS,
+    HEADER_STATUS,
+    STATUS_MISSING,
+    STATUS_INVALID_DAYS,
+    STATUS_DUPLICATE,
+    SYNC_LOCK_TIMEOUT_MS,
     MAX_THREADS_PER_RUN,
     ARCHIVE_BATCH_SIZE,
     ARCHIVE_SEARCH_LIMIT,

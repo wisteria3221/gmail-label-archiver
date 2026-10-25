@@ -5,9 +5,15 @@
  * 連結される。本ファイルの top-level 関数 `archiveLabeledThreads` はそのまま
  * グローバル公開され、日次トリガーのハンドラ（`TRIGGER_HANDLER`）かつ手動実行の
  * 共通エントリとなる（4.3：呼び出し元で分岐しない）。
+ * `syncLabels` は同期だけを手動で実行するエントリ（5.2）。
  *
  * 依存（GAS では同一グローバルスコープのグローバル）:
- * - `readArchiveRules()`（ConfigService）: 検証済みルール配列を返す／構成不備で throw。
+ * - `syncLabelSheet()`（SheetSync）: Gmail のラベル一覧を設定シートへ同期し（旧形式は移行）、
+ *   `{ migrated, migratedCheckedCount, appendedCount, missingCount }` を返す／失敗で throw。
+ *   日次実行の冒頭（5.1）と手動同期エントリ `syncLabels`（5.2）で呼ぶ。
+ * - `readArchiveRules()`（ConfigService）: `{ rules, invalidLabels }`（ConfigReadResult）を
+ *   返す／構成不備で throw。`rules`（検証済み明示ルール配列）を処理し、`invalidLabels`
+ *   （チェックありで保持日数が無効なラベル名）はスキップのログに使う（3.5）。
  * - `listUserLabelNames()`（ArchiveService）: Gmail の全ユーザーラベル名を返す（6.1）。
  * - `expandRules(rules, allLabelNames)`（ConfigService）: 明示ルールを親とみなし
  *   配下の子孫ラベルへ展開した一意化済みルール配列を返す純粋関数（6.1）。
@@ -16,17 +22,22 @@
  * - `MAX_THREADS_PER_RUN`（Constants）: 実行全体の処理上限。
  *
  * 失敗時の方針: GAS のトリガー失敗通知メールは例外送出時にしか送られないため、
- * 構成不備・ラベル一覧取得失敗はログ後に再 throw し、ルール単位のエラーは全ルール処理と
- * サマリ出力を終えた後にまとめて throw する（無人運用で失敗に気づけるようにする）。
+ * 構成不備・ラベル一覧取得失敗はログ後に再 throw し、シート同期の失敗とルール単位のエラーは
+ * 全ルール処理とサマリ出力を終えた後にまとめて 1 回 throw する（無人運用で失敗に気づけるようにする）。
  */
 
 /**
  * トリガー／手動共通のアーカイブエントリ（引数なし、4.3）。
  *
- * 1. `readArchiveRules()` で検証済みルールを取得。構成不備（throw）は
- *    ログに記録して再 throw する（トリガー失敗通知を発火させる、Error Strategy 構成不備）。
- * 2. 明示ルール 0 件なら、ラベル取得・展開を行わず短絡終了（1.3）。
- *    Gmail への往復を避けるため、`listUserLabelNames`/`expandRules` より前で return する。
+ * 0. `syncLabelSheet()` でラベル一覧を設定シートへ同期する（5.1）。成功時は、移行したときだけ
+ *    移行完了（4.7）、常に同期完了（5.3）をログに出す。失敗時はエラーをログに出して
+ *    `syncFailed` を記録し、現在の設定のままアーカイブを続行する（6.1）。
+ * 1. `readArchiveRules()` の戻り値から検証済みルール（`rules`）と無効行（`invalidLabels`）を
+ *    取得し、無効行はラベルごとに `ℹ️ [スキップ]` を 1 行出す（3.5）。構成不備（throw）は
+ *    ログに記録してその場で再 throw する（トリガー失敗通知を発火させる、6.3, 6.4）。
+ * 2. 明示ルール 0 件なら、ラベル取得・展開を行わず短絡終了（1.3, 3.8）。
+ *    Gmail への往復を避けるため、`listUserLabelNames`/`expandRules` より前で抜ける。
+ *    `syncFailed` なら return の代わりに throw する（6.1）。
  * 3. 1 件以上なら `listUserLabelNames()` で全ラベル名を取得し（失敗時はログして
  *    再 throw）、`expandRules(rules, labelNames)` で対象を子孫へ展開（6.1）。
  * 4. 残予算 `remaining` を `MAX_THREADS_PER_RUN` で初期化し、実行全体で 1 つの
@@ -41,16 +52,32 @@
  *    - ルール単位 try/catch でエラーを記録し次ルールへ継続（5.2）。エラーのルールは
  *      2 巡目の対象外。
  * 5. 実行サマリ（処理ルール数・ルール別件数・エラー数・残予算）を標準ログへ出力（5.4）。
- * 6. ルール単位のエラーが 1 件以上あれば、サマリ出力後に throw する（失敗通知）。
+ * 6. `syncFailed` またはルール単位のエラーが 1 件以上あれば、サマリ出力後に 1 回だけ throw する
+ *    （失敗通知、6.1）。両方あればメッセージに原因を併記する。
  *
  * @returns {void}
- * @throws {Error} 構成不備・ラベル一覧取得失敗・ルール単位エラーが 1 件以上あった場合
+ * @throws {Error} 構成不備・ラベル一覧取得失敗・シート同期失敗・ルール単位エラーが 1 件以上あった場合
  */
 function archiveLabeledThreads() {
-  // 1. 設定読取（構成不備はログして再 throw、Error Strategy 構成不備）。
-  let rules;
+  // 0. ラベル一覧をシートへ同期する（5.1）。失敗してもアーカイブは続行し、終了時に throw する（6.1）。
+  let syncFailed = false;
   try {
-    rules = readArchiveRules();
+    logSyncResult(syncLabelSheet());
+  } catch (err) {
+    syncFailed = true;
+    logLine(
+      '⚠️ [エラー] ラベル一覧の同期に失敗しました。現在の設定でアーカイブを続行し、終了時にエラーとして通知します: ' +
+        errorMessage(err)
+    );
+  }
+
+  // 1. 設定読取（構成不備はログして再 throw、Error Strategy 構成不備、6.3, 6.4）。
+  let rules;
+  let invalidLabels;
+  try {
+    const config = readArchiveRules();
+    rules = config.rules;
+    invalidLabels = config.invalidLabels || [];
   } catch (err) {
     logLine(
       '⚠️ [エラー] 設定の読み取りに失敗したため処理を中止しました（設定内容を確認してください）: ' +
@@ -59,9 +86,22 @@ function archiveLabeledThreads() {
     throw err;
   }
 
-  // 2. 明示ルール 0 件 → ラベル取得・展開を行わず短絡終了（1.3、Gmail 往復なし）。
+  // チェックありで保持日数が無効な行は、ラベルごとに 1 行ログしてスキップする（3.5、throw しない）。
+  for (let i = 0; i < invalidLabels.length; i++) {
+    logLine(
+      'ℹ️ [スキップ] ラベル「' +
+        invalidLabels[i] +
+        '」は対象にチェックがありますが、保持日数が無効なためスキップしました（正の整数を入力してください）。'
+    );
+  }
+
+  // 2. 明示ルール 0 件 → ラベル取得・展開を行わず短絡終了（1.3, 3.8、Gmail 往復なし）。
+  //    同期に失敗していた場合は、return の代わりに throw して失敗通知を発火させる（6.1）。
   if (!rules || rules.length === 0) {
     logLine('ℹ️ [スキップ] 対象のルールが無いため、処理を実行しませんでした。');
+    if (syncFailed) {
+      throw new Error(buildFailureMessage(true, 0));
+    }
     return;
   }
 
@@ -160,12 +200,75 @@ function archiveLabeledThreads() {
       ']'
   );
 
-  // 6. ルール単位のエラーがあれば、全ルール処理・サマリ出力後に throw（失敗通知）。
-  if (errorCount > 0) {
-    throw new Error(
-      errorCount + '件のルールでエラーが発生しました（詳細は実行ログを参照）。'
+  // 6. 同期失敗またはルール単位のエラーがあれば、全ルール処理・サマリ出力後に 1 回だけ throw
+  //    （失敗通知、6.1）。両方あればメッセージに併記する。
+  if (syncFailed || errorCount > 0) {
+    throw new Error(buildFailureMessage(syncFailed, errorCount));
+  }
+}
+
+/**
+ * 手動で同期だけを実行するエントリ（引数なし、5.2）。GAS エディタから直接実行する。
+ *
+ * `syncLabelSheet()` でラベル一覧を設定シートへ同期し、成功したら日次実行と同じ
+ * 移行完了（移行したときだけ、4.7）・同期完了（5.3）のログを出す。アーカイブ処理
+ *（`readArchiveRules` / `listUserLabelNames` / `archiveRule`）は呼ばない（5.2）。
+ * 失敗したら `⚠️ [エラー]` を 1 行出して元の例外を再 throw し、実行を失敗として終える（6.2）。
+ *
+ * @returns {void}
+ * @throws {Error} 同期に失敗した場合（`syncLabelSheet` の例外をそのまま再 throw）
+ */
+function syncLabels() {
+  let result;
+  try {
+    result = syncLabelSheet();
+  } catch (err) {
+    logLine('⚠️ [エラー] ラベル一覧の同期に失敗しました: ' + errorMessage(err));
+    throw err;
+  }
+  logSyncResult(result);
+}
+
+/**
+ * 同期結果を移行・同期のログに出す（4.7, 5.3、1 出来事 1 行）。
+ * 移行したときだけ移行完了を出し、同期完了は常に出す。
+ *
+ * @param {{migrated: boolean, migratedCheckedCount: number, appendedCount: number, missingCount: number}} result
+ */
+function logSyncResult(result) {
+  if (result.migrated) {
+    logLine(
+      '✅ [移行完了] 設定シートを新しい形式に移行しました: 対象にチェック ' +
+        result.migratedCheckedCount +
+        '件'
     );
   }
+  logLine(
+    '✅ [同期完了] ラベル一覧を同期しました: 追加 ' +
+      result.appendedCount +
+      '件 / Gmail に存在しない ' +
+      result.missingCount +
+      '件'
+  );
+}
+
+/**
+ * 日次実行の終了時に throw するメッセージを組み立てる（6.1）。
+ * 同期失敗とルール単位のエラーが重なったときは ` / ` で併記する。
+ *
+ * @param {boolean} syncFailed
+ * @param {number} errorCount
+ * @returns {string}
+ */
+function buildFailureMessage(syncFailed, errorCount) {
+  const ruleMessage = errorCount + '件のルールでエラーが発生しました（詳細は実行ログを参照）。';
+  if (syncFailed && errorCount > 0) {
+    return 'ラベル一覧の同期に失敗しました / ' + ruleMessage;
+  }
+  if (syncFailed) {
+    return 'ラベル一覧の同期に失敗しました（詳細は実行ログを参照）。';
+  }
+  return ruleMessage;
 }
 
 /**
@@ -238,5 +341,5 @@ function errorMessage(err) {
 
 // Node-only export guard: GAS では `module` が未定義のため評価されない。
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { archiveLabeledThreads, setupDailyTrigger, removeAllTriggers };
+  module.exports = { archiveLabeledThreads, syncLabels, setupDailyTrigger, removeAllTriggers };
 }
