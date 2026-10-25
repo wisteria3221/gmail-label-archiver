@@ -298,3 +298,47 @@ test('expandRules: result is unique by labelName (6.3)', () => {
     { labelName: '仕事/案件A', retentionDays: 30 },
   ]);
 });
+
+// --- expandRules: Gmail のラベル名は大文字小文字を区別しないため、展開も区別しない ---
+
+test('expandRules: descendant is expanded even when case differs from explicit rule', () => {
+  const rules = [{ labelName: 'work', retentionDays: 30 }];
+  const allLabelNames = ['Work', 'Work/Sub', 'Work/Sub/Deep'];
+  const result = expandRules(rules, allLabelNames).sort(byLabel);
+  // 明示ルールはシートの表記のまま、展開ルールは Gmail 上の実ラベル名を使う。
+  assert.deepEqual(result, [
+    { labelName: 'Work/Sub', retentionDays: 30 },
+    { labelName: 'Work/Sub/Deep', retentionDays: 30 },
+    { labelName: 'work', retentionDays: 30 },
+  ]);
+});
+
+test('expandRules: label equal to explicit rule ignoring case is not added twice', () => {
+  const rules = [{ labelName: 'work', retentionDays: 30 }];
+  const result = expandRules(rules, ['Work']);
+  assert.deepEqual(result, [{ labelName: 'work', retentionDays: 30 }]);
+});
+
+test('expandRules: explicit child takes precedence ignoring case (6.5)', () => {
+  const rules = [
+    { labelName: 'Work', retentionDays: 30 },
+    { labelName: 'work/sub', retentionDays: 7 },
+  ];
+  const result = expandRules(rules, ['Work', 'Work/Sub']).sort(byLabel);
+  assert.deepEqual(result, [
+    { labelName: 'Work', retentionDays: 30 },
+    { labelName: 'work/sub', retentionDays: 7 },
+  ]);
+});
+
+test('expandRules: explicit rules differing only in case are deduped (first wins)', () => {
+  const rules = [
+    { labelName: 'Work', retentionDays: 30 },
+    { labelName: 'WORK', retentionDays: 7 },
+  ];
+  const result = expandRules(rules, ['Work', 'Work/Sub']).sort(byLabel);
+  assert.deepEqual(result, [
+    { labelName: 'Work', retentionDays: 30 },
+    { labelName: 'Work/Sub', retentionDays: 30 },
+  ]);
+});

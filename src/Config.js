@@ -138,11 +138,13 @@ function findHeaderColumn_(header, name) {
  * 副作用なし・GmailApp 非依存（ラベル一覧は引数で受け取る、テスト容易）。
  *
  * ルール:
- * - 明示ルール（rules）は labelName キーで常に保持・優先する（6.5）。
+ * - Gmail のラベル名は大文字小文字を区別しない（`label:` 検索も同様）ため、
+ *   ラベル名の照合・一意化はすべて小文字化したキーで行う。
+ * - 明示ルール（rules）は labelName キーで常に保持・優先する（6.5）。表記はシートのまま。
  * - allLabelNames のうち明示済みでないラベル L について、L が「<R.labelName>/」で
  *   始まる明示ルール R をすべて祖先候補とし（6.1/6.2、多階層を網羅）、最長の
  *   R.labelName を持つ親を採用する（決定 1）。採用した親の retentionDays を継承し、
- *   { labelName: L, retentionDays: 親.retentionDays } を追加する（6.4）。
+ *   { labelName: L, retentionDays: 親.retentionDays } を追加する（6.4）。L は Gmail 上の表記。
  * - 結果は labelName キーで一意化する。子孫が 1 件も無ければ明示ルールのみ返す（6.6）。
  *
  * @param {ArchiveRule[]} rules 設定シート由来の検証済み明示ルール
@@ -150,13 +152,14 @@ function findHeaderColumn_(header, name) {
  * @returns {ArchiveRule[]} 展開・一意化済みルール（明示行 ＋ 継承された子孫行）
  */
 function expandRules(rules, allLabelNames) {
-  // (a) 明示ルールを labelName キーで保持。常に優先し、継承で上書きしない（6.5）。
-  // 同一 labelName が複数あれば先勝ち（一意化）。
-  const byLabelName = {};
+  // (a) 明示ルールを小文字化 labelName キーで保持。常に優先し、継承で上書きしない（6.5）。
+  // 大文字小文字違いを含め同一 labelName が複数あれば先勝ち（一意化）。
+  const byLabelKey = {};
   for (let i = 0; i < rules.length; i++) {
     const rule = rules[i];
-    if (!Object.prototype.hasOwnProperty.call(byLabelName, rule.labelName)) {
-      byLabelName[rule.labelName] = {
+    const key = labelKey_(rule.labelName);
+    if (!Object.prototype.hasOwnProperty.call(byLabelKey, key)) {
+      byLabelKey[key] = {
         labelName: rule.labelName,
         retentionDays: rule.retentionDays,
       };
@@ -166,9 +169,10 @@ function expandRules(rules, allLabelNames) {
   // (b) 各ラベル L について、明示済みでなければ祖先（最長プレフィックス）を探して継承。
   for (let j = 0; j < allLabelNames.length; j++) {
     const labelName = allLabelNames[j];
+    const key = labelKey_(labelName);
 
-    // 明示行があるラベルはスキップ（明示優先・継承しない、6.5）。
-    if (Object.prototype.hasOwnProperty.call(byLabelName, labelName)) {
+    // 明示行がある（または既に追加済みの）ラベルはスキップ（明示優先・一意化、6.5）。
+    if (Object.prototype.hasOwnProperty.call(byLabelKey, key)) {
       continue;
     }
 
@@ -177,8 +181,8 @@ function expandRules(rules, allLabelNames) {
     let bestAncestor = null;
     for (let k = 0; k < rules.length; k++) {
       const candidate = rules[k];
-      const prefix = candidate.labelName + LABEL_HIERARCHY_SEPARATOR;
-      if (labelName.indexOf(prefix) === 0) {
+      const prefix = labelKey_(candidate.labelName) + LABEL_HIERARCHY_SEPARATOR;
+      if (key.indexOf(prefix) === 0) {
         if (
           bestAncestor === null ||
           candidate.labelName.length > bestAncestor.labelName.length
@@ -189,26 +193,31 @@ function expandRules(rules, allLabelNames) {
     }
 
     // (c)(d) 祖先が見つかればその保持日数を継承して追加（6.1/6.4）。
-    // 一意化のため byLabelName に格納（重複ラベル名は先勝ちで吸収）。
-    if (
-      bestAncestor !== null &&
-      !Object.prototype.hasOwnProperty.call(byLabelName, labelName)
-    ) {
-      byLabelName[labelName] = {
+    if (bestAncestor !== null) {
+      byLabelKey[key] = {
         labelName: labelName,
         retentionDays: bestAncestor.retentionDays,
       };
     }
   }
 
-  // (e) labelName で一意化された結果を配列化して返す。
+  // (e) 一意化された結果を配列化して返す。
   // 子孫が無ければ明示ルールのみが残る（6.6）。
   const result = [];
-  const keys = Object.keys(byLabelName);
+  const keys = Object.keys(byLabelKey);
   for (let m = 0; m < keys.length; m++) {
-    result.push(byLabelName[keys[m]]);
+    result.push(byLabelKey[keys[m]]);
   }
   return result;
+}
+
+/**
+ * ラベル名の照合キー（小文字化）を返す。Gmail のラベル名は大文字小文字を区別しない。
+ * @param {string} labelName
+ * @returns {string}
+ */
+function labelKey_(labelName) {
+  return labelName.toLowerCase();
 }
 
 // Node-only export guard: GAS では `module` が未定義のため評価されない。
