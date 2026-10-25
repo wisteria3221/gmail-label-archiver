@@ -104,7 +104,7 @@ test('readArchiveRules: header-only sheet returns [] (1.3)', () => {
     props: { CONFIG_SPREADSHEET_ID: 'id1' },
     sheets: { settings: [['ラベル名', '保持日数']] },
   });
-  assert.deepEqual(readArchiveRules(), []);
+  assert.deepEqual(readArchiveRules().rules, []);
 });
 
 test('readArchiveRules: mixed rows returns only valid rules (1.1, 1.4, 1.5)', () => {
@@ -122,7 +122,7 @@ test('readArchiveRules: mixed rows returns only valid rules (1.1, 1.4, 1.5)', ()
       ],
     },
   });
-  assert.deepEqual(readArchiveRules(), [
+  assert.deepEqual(readArchiveRules().rules, [
     { labelName: 'Newsletter', retentionDays: 30 },
     { labelName: 'News', retentionDays: 7 },
   ]);
@@ -139,7 +139,7 @@ test('readArchiveRules: all-invalid data rows return [] (1.4, 1.5)', () => {
       ],
     },
   });
-  assert.deepEqual(readArchiveRules(), []);
+  assert.deepEqual(readArchiveRules().rules, []);
 });
 
 test('readArchiveRules: header columns resolved by name regardless of order', () => {
@@ -152,7 +152,7 @@ test('readArchiveRules: header columns resolved by name regardless of order', ()
       ],
     },
   });
-  assert.deepEqual(readArchiveRules(), [
+  assert.deepEqual(readArchiveRules().rules, [
     { labelName: 'Newsletter', retentionDays: 30 },
   ]);
 });
@@ -167,7 +167,7 @@ test('readArchiveRules: trims header cells when matching', () => {
       ],
     },
   });
-  assert.deepEqual(readArchiveRules(), [{ labelName: 'A', retentionDays: 5 }]);
+  assert.deepEqual(readArchiveRules().rules, [{ labelName: 'A', retentionDays: 5 }]);
 });
 
 test('readArchiveRules: CONFIG_SHEET_NAME override is honored', () => {
@@ -181,7 +181,7 @@ test('readArchiveRules: CONFIG_SHEET_NAME override is honored', () => {
       settings: [['ラベル名', '保持日数']], // would yield [] if wrongly used
     },
   });
-  assert.deepEqual(readArchiveRules(), [{ labelName: 'A', retentionDays: 5 }]);
+  assert.deepEqual(readArchiveRules().rules, [{ labelName: 'A', retentionDays: 5 }]);
 });
 
 test('readArchiveRules: absent CONFIG_SHEET_NAME uses DEFAULT_SHEET_NAME (settings)', () => {
@@ -194,7 +194,7 @@ test('readArchiveRules: absent CONFIG_SHEET_NAME uses DEFAULT_SHEET_NAME (settin
       ],
     },
   });
-  assert.deepEqual(readArchiveRules(), [{ labelName: 'A', retentionDays: 5 }]);
+  assert.deepEqual(readArchiveRules().rules, [{ labelName: 'A', retentionDays: 5 }]);
 });
 
 test('readArchiveRules: sheet not found throws (configuration error)', () => {
@@ -216,6 +216,110 @@ test('readArchiveRules: header schema mismatch throws (configuration error)', ()
     },
   });
   assert.throws(readArchiveRules);
+});
+
+test('readArchiveRules: old format returns { rules, invalidLabels } with empty invalidLabels (4.6)', () => {
+  setupGas({
+    props: { CONFIG_SPREADSHEET_ID: 'id1' },
+    sheets: {
+      settings: [
+        ['ラベル名', '保持日数'],
+        ['Newsletter', '30'],
+        ['Promo', 'abc'], // 旧形式の無効行は黙ってスキップ（警告しない）
+      ],
+    },
+  });
+  assert.deepEqual(readArchiveRules(), {
+    rules: [{ labelName: 'Newsletter', retentionDays: 30 }],
+    invalidLabels: [],
+  });
+});
+
+test('readArchiveRules: header schema mismatch throws even with 対象 column (6.4)', () => {
+  setupGas({
+    props: { CONFIG_SPREADSHEET_ID: 'id1' },
+    sheets: {
+      settings: [
+        ['対象', 'ラベル名'], // 保持日数 列が無い
+        [true, 'A'],
+      ],
+    },
+  });
+  assert.throws(readArchiveRules, /ヘッダが不正です/);
+});
+
+test('readArchiveRules: new format returns only checked & valid rows, ignores unchecked days (3.1, 3.6)', () => {
+  setupGas({
+    props: { CONFIG_SPREADSHEET_ID: 'id1' },
+    sheets: {
+      settings: [
+        ['対象', 'ラベル名', '保持日数', '適用日数', '状態'],
+        [true, 'Newsletter', 30, '', ''], // checked & valid
+        [false, 'Promo', 7, '', ''], // unchecked → 無視（3.6）
+        [false, 'Sale', 'abc', '', ''], // unchecked & 無効日数 → 無視、警告しない（3.6）
+        ['TRUE', 'Str', 5, '', ''], // 文字列 'TRUE' はチェックではない（=== true のみ）
+        [true, '  News  ', ' 14 ', '', ''], // checked & valid（trim）
+      ],
+    },
+  });
+  assert.deepEqual(readArchiveRules(), {
+    rules: [
+      { labelName: 'Newsletter', retentionDays: 30 },
+      { labelName: 'News', retentionDays: 14 },
+    ],
+    invalidLabels: [],
+  });
+});
+
+test('readArchiveRules: new format lists checked-but-invalid labels in invalidLabels (3.5)', () => {
+  setupGas({
+    props: { CONFIG_SPREADSHEET_ID: 'id1' },
+    sheets: {
+      settings: [
+        ['ラベル名', '保持日数', '対象'], // 列順に依存しない
+        ['Bad', 'abc', true], // checked & invalid → invalidLabels
+        ['Zero', 0, true], // checked & invalid → invalidLabels
+        ['Empty', '', true], // checked & invalid → invalidLabels
+        ['Good', 10, true], // checked & valid
+        ['', 5, true], // ラベル名が空 → 無視
+      ],
+    },
+  });
+  assert.deepEqual(readArchiveRules(), {
+    rules: [{ labelName: 'Good', retentionDays: 10 }],
+    invalidLabels: ['Bad', 'Zero', 'Empty'],
+  });
+});
+
+test('readArchiveRules: old format and its migrated new format yield the same rules (4.6)', () => {
+  setupGas({
+    props: { CONFIG_SPREADSHEET_ID: 'id1' },
+    sheets: {
+      settings: [
+        ['ラベル名', '保持日数'],
+        ['A', '5'],
+        ['B', 'x'],
+        ['C', 3],
+      ],
+    },
+  });
+  const oldResult = readArchiveRules();
+  setupGas({
+    props: { CONFIG_SPREADSHEET_ID: 'id1' },
+    sheets: {
+      settings: [
+        ['対象', 'ラベル名', '保持日数'],
+        [true, 'A', '5'],
+        [false, 'B', 'x'],
+        [true, 'C', 3],
+      ],
+    },
+  });
+  assert.deepEqual(readArchiveRules().rules, oldResult.rules);
+  assert.deepEqual(oldResult.rules, [
+    { labelName: 'A', retentionDays: 5 },
+    { labelName: 'C', retentionDays: 3 },
+  ]);
 });
 
 // --- expandRules (6.1-6.6) ---

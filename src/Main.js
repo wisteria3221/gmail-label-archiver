@@ -7,7 +7,8 @@
  * 共通エントリとなる（4.3：呼び出し元で分岐しない）。
  *
  * 依存（GAS では同一グローバルスコープのグローバル）:
- * - `readArchiveRules()`（ConfigService）: 検証済みルール配列を返す／構成不備で throw。
+ * - `readArchiveRules()`（ConfigService）: `{ rules, invalidLabels }`（ConfigReadResult）を
+ *   返す／構成不備で throw。本処理は `rules`（検証済み明示ルール配列）を使う。
  * - `listUserLabelNames()`（ArchiveService）: Gmail の全ユーザーラベル名を返す（6.1）。
  * - `expandRules(rules, allLabelNames)`（ConfigService）: 明示ルールを親とみなし
  *   配下の子孫ラベルへ展開した一意化済みルール配列を返す純粋関数（6.1）。
@@ -23,7 +24,7 @@
 /**
  * トリガー／手動共通のアーカイブエントリ（引数なし、4.3）。
  *
- * 1. `readArchiveRules()` で検証済みルールを取得。構成不備（throw）は
+ * 1. `readArchiveRules()` の戻り値から検証済みルール（`rules`）を取得。構成不備（throw）は
  *    ログに記録して再 throw する（トリガー失敗通知を発火させる、Error Strategy 構成不備）。
  * 2. 明示ルール 0 件なら、ラベル取得・展開を行わず短絡終了（1.3）。
  *    Gmail への往復を避けるため、`listUserLabelNames`/`expandRules` より前で return する。
@@ -50,7 +51,7 @@ function archiveLabeledThreads() {
   // 1. 設定読取（構成不備はログして再 throw、Error Strategy 構成不備）。
   let rules;
   try {
-    rules = readArchiveRules();
+    rules = readArchiveRules().rules;
   } catch (err) {
     logLine(
       '⚠️ [エラー] 設定の読み取りに失敗したため処理を中止しました（設定内容を確認してください）: ' +

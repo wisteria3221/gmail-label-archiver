@@ -31,7 +31,7 @@ function cleanup() {
 test('empty rules: archiveRule and listUserLabelNames are never called, returns without throwing (1.3)', () => {
   let archiveCalls = 0;
   let labelListCalls = 0;
-  globalThis.readArchiveRules = () => [];
+  globalThis.readArchiveRules = () => ({ rules: [], invalidLabels: [] });
   globalThis.listUserLabelNames = () => {
     labelListCalls += 1;
     return [];
@@ -72,7 +72,10 @@ function installBacklogArchiveRule(backlog) {
 }
 
 function setRules(names) {
-  globalThis.readArchiveRules = () => names.map((n) => ({ labelName: n, retentionDays: 30 }));
+  globalThis.readArchiveRules = () => ({
+    rules: names.map((n) => ({ labelName: n, retentionDays: 30 })),
+    invalidLabels: [],
+  });
   globalThis.listUserLabelNames = () => names.slice();
 }
 
@@ -182,7 +185,7 @@ test('per-rule error: subsequent rule still processed, then throws for failure n
   ];
   const calledLabels = [];
 
-  globalThis.readArchiveRules = () => rules;
+  globalThis.readArchiveRules = () => ({ rules, invalidLabels: [] });
   globalThis.listUserLabelNames = () => ['A', 'B', 'C'];
   globalThis.archiveRule = (rule) => {
     calledLabels.push(rule.labelName);
@@ -218,7 +221,7 @@ test('expansion wired: descendant labels are expanded and processed (6.1)', () =
   const rules = [{ labelName: 'Work', retentionDays: 30 }];
   const calledLabels = [];
 
-  globalThis.readArchiveRules = () => rules;
+  globalThis.readArchiveRules = () => ({ rules, invalidLabels: [] });
   globalThis.listUserLabelNames = () => ['Work', 'Work/Project', 'Unrelated'];
   globalThis.archiveRule = (rule) => {
     calledLabels.push(rule.labelName);
@@ -253,7 +256,7 @@ test('seenThreadIds shared: same Set instance passed to every archiveRule call (
   ];
   const seenArgs = [];
 
-  globalThis.readArchiveRules = () => rules;
+  globalThis.readArchiveRules = () => ({ rules, invalidLabels: [] });
   // Work には子孫が 1 つあり、合計 3 ルールへ展開される。
   globalThis.listUserLabelNames = () => ['Work', 'Work/Sub', 'Home'];
   globalThis.archiveRule = (rule, now, remaining, seenThreadIds) => {
@@ -280,7 +283,10 @@ test('seenThreadIds shared: same Set instance passed to every archiveRule call (
 
 test('listUserLabelNames failure: archiveLabeledThreads throws, archiveRule never called', () => {
   let archiveCalls = 0;
-  globalThis.readArchiveRules = () => [{ labelName: 'Work', retentionDays: 30 }];
+  globalThis.readArchiveRules = () => ({
+    rules: [{ labelName: 'Work', retentionDays: 30 }],
+    invalidLabels: [],
+  });
   globalThis.listUserLabelNames = () => {
     throw new Error('Gmail label fetch failed');
   };

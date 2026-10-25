@@ -9,7 +9,8 @@
  * `openConfigSheet` は Script Property が指す設定シートを開く（SpreadsheetApp 依存）。
  * `resolveColumns` はヘッダ行から列位置を解決する純粋関数。
  * `collectExplicitRules` はデータ行を分類し明示ルールを決める純粋関数。
- * `readArchiveRules` は設定シートを読み、検証済みルールを返す。
+ * `readArchiveRules` は設定シートを読み（旧形式・新形式の両対応）、明示ルールと
+ * 無効行のラベル名を返す。
  * `expandRules` は明示ルールを子孫ラベルへ展開する純粋関数。
  */
 
@@ -223,15 +224,26 @@ function collectExplicitRules(values, columns) {
 }
 
 /**
- * Script Property が指す設定シートを読み、検証済みの `ArchiveRule[]` を返す。
+ * @typedef {Object} ConfigReadResult
+ * @property {ArchiveRule[]} rules        ExplicitRuleSet.rules と同じ
+ * @property {string[]}      invalidLabels ExplicitRuleSet.invalidLabels と同じ
+ */
+
+/**
+ * Script Property が指す設定シートを読み、`ConfigReadResult` を返す。
+ * 旧形式（`対象` 列なし）と新形式（`対象` 列あり）の両方に対応する。
  *
  * 処理:
  * 1. `openConfigSheet` で設定シートを開く（ID 未設定・シート不在は例外、6.3）。
  * 2. 全値を読み、1 行目をヘッダとみなし `resolveColumns` で列を解決。期待ヘッダ
  *    （`ラベル名`/`保持日数`）が見つからなければ例外（スキーマ不一致、6.4）。
- * 3. 2 行目以降を `validateRow` に通し、有効行のみ収集して返す。
+ * 3. `collectExplicitRules` の `rules` と `invalidLabels` をそのまま返す。
+ *    - 新形式: チェックありかつ有効な行のみ rules（3.1）。未チェック行の日数は
+ *      見ない（3.6）。チェックありで日数無効の行は invalidLabels（3.5）。
+ *    - 旧形式: 有効行がすべて rules（現行どおり、1.4, 1.5）。旧形式と、それを
+ *      移行した新形式とで rules が一致する（4.6）。
  *
- * @returns {ArchiveRule[]} 有効な行のみ。データ0件・全行無効なら空配列（1.3）。
+ * @returns {ConfigReadResult} データ0件・全行無効なら rules は空配列（1.3）。
  * @throws {Error} CONFIG_SPREADSHEET_ID 未設定、シート/スプレッドシート不在、
  *   またはヘッダスキーマ不一致の場合（構成不備＝フェイルファスト）。
  */
@@ -243,9 +255,7 @@ function readArchiveRules() {
   const values = sheet.getDataRange().getValues();
   const header = values.length > 0 ? values[0] : [];
   const columns = resolveColumns(header);
-  const labelCol = columns.label;
-  const daysCol = columns.days;
-  if (labelCol === -1 || daysCol === -1) {
+  if (columns.label === -1 || columns.days === -1) {
     throw new Error(
       'ヘッダが不正です。期待: "' +
         HEADER_LABEL +
@@ -255,16 +265,9 @@ function readArchiveRules() {
     );
   }
 
-  // 3. 2 行目以降をデータ行として検証。無効行は黙ってスキップ（1.4, 1.5）。
-  const rules = [];
-  for (let i = 1; i < values.length; i++) {
-    const row = values[i];
-    const rule = validateRow(row[labelCol], row[daysCol]);
-    if (rule !== null) {
-      rules.push(rule);
-    }
-  }
-  return rules;
+  // 3. 行の分類と明示ルールの決定は collectExplicitRules に一任する（3.1, 3.5, 3.6, 4.6）。
+  const ruleSet = collectExplicitRules(values, columns);
+  return { rules: ruleSet.rules, invalidLabels: ruleSet.invalidLabels };
 }
 
 /**
