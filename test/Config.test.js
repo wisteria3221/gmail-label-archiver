@@ -447,3 +447,151 @@ test('labelKey: returns lower-cased match key', () => {
   assert.equal(labelKey('Work/Sub'), 'work/sub');
   assert.equal(labelKey('仕事'), '仕事');
 });
+
+// ---------------------------------------------------------------------------
+// collectExplicitRules（行の分類と明示ルールの決定、3.1, 3.2, 3.4, 3.5, 3.6, 3.7, 4.6）
+// ---------------------------------------------------------------------------
+
+const { collectExplicitRules } = require('../src/Config.js');
+
+const NEW_HEADER = ['対象', 'ラベル名', '保持日数', '適用日数', '状態'];
+const OLD_HEADER = ['ラベル名', '保持日数'];
+
+function classify(values) {
+  return collectExplicitRules(values, resolveColumns(values[0]));
+}
+
+test('collectExplicitRules: upper unchecked + lower checked valid -> lower explicit, upper duplicate (3.7)', () => {
+  const result = classify([
+    NEW_HEADER,
+    [false, 'News', 10, '', ''],
+    [true, 'News', 30, '', ''],
+  ]);
+  assert.deepEqual(result.rules, [{ labelName: 'News', retentionDays: 30 }]);
+  assert.deepEqual(result.rowClasses, ['duplicate', 'explicit']);
+  assert.deepEqual(result.invalidLabels, []);
+});
+
+test('collectExplicitRules: upper checked-invalid + lower valid -> upper duplicate, not in invalidLabels (3.5, 3.7)', () => {
+  const result = classify([
+    NEW_HEADER,
+    [true, 'News', 'abc', '', ''],
+    [true, 'News', 30, '', ''],
+  ]);
+  assert.deepEqual(result.rules, [{ labelName: 'News', retentionDays: 30 }]);
+  assert.deepEqual(result.rowClasses, ['duplicate', 'explicit']);
+  assert.deepEqual(result.invalidLabels, []);
+});
+
+test('collectExplicitRules: both checked valid -> upper explicit, lower duplicate (3.7)', () => {
+  const result = classify([
+    NEW_HEADER,
+    [true, 'News', 7, '', ''],
+    [true, 'News', 30, '', ''],
+  ]);
+  assert.deepEqual(result.rules, [{ labelName: 'News', retentionDays: 7 }]);
+  assert.deepEqual(result.rowClasses, ['explicit', 'duplicate']);
+});
+
+test('collectExplicitRules: same name differing only in case is treated as the same label (3.7)', () => {
+  const result = classify([
+    NEW_HEADER,
+    [true, 'News', 7, '', ''],
+    [true, 'NEWS', 30, '', ''],
+    [false, 'news', '', '', ''],
+  ]);
+  assert.deepEqual(result.rules, [{ labelName: 'News', retentionDays: 7 }]);
+  assert.deepEqual(result.rowClasses, ['explicit', 'duplicate', 'duplicate']);
+});
+
+test('collectExplicitRules: unchecked rows days are ignored and rows become none (3.1, 3.6)', () => {
+  const result = classify([
+    NEW_HEADER,
+    [false, 'A', 30, '', ''],
+    [false, 'B', 'abc', '', ''],
+    ['', 'C', 5, '', ''],
+    ['TRUE', 'D', 5, '', ''],
+    [true, 'E', 14, '', ''],
+  ]);
+  assert.deepEqual(result.rules, [{ labelName: 'E', retentionDays: 14 }]);
+  assert.deepEqual(result.rowClasses, ['none', 'none', 'none', 'none', 'explicit']);
+  assert.deepEqual(result.invalidLabels, []);
+});
+
+test('collectExplicitRules: checked row with invalid days is invalid and listed in row order (3.4, 3.5)', () => {
+  const result = classify([
+    NEW_HEADER,
+    [true, 'Z', 0, '', ''],
+    [true, 'A', 30, '', ''],
+    [true, 'Y', '', '', ''],
+  ]);
+  assert.deepEqual(result.rules, [{ labelName: 'A', retentionDays: 30 }]);
+  assert.deepEqual(result.rowClasses, ['invalid', 'explicit', 'invalid']);
+  assert.deepEqual(result.invalidLabels, ['Z', 'Y']);
+});
+
+test('collectExplicitRules: blank labels are blank regardless of target (3.2)', () => {
+  const result = classify([
+    NEW_HEADER,
+    [true, '', 30, '', ''],
+    [false, '   ', '', '', ''],
+    [true, 'A', 30, '', ''],
+  ]);
+  assert.deepEqual(result.rules, [{ labelName: 'A', retentionDays: 30 }]);
+  assert.deepEqual(result.rowClasses, ['blank', 'blank', 'explicit']);
+  assert.deepEqual(result.invalidLabels, []);
+});
+
+test('collectExplicitRules: header-only sheet returns empty sets', () => {
+  assert.deepEqual(classify([NEW_HEADER]), {
+    rules: [],
+    invalidLabels: [],
+    rowClasses: [],
+  });
+});
+
+test('collectExplicitRules: old format treats every row as candidate; invalid rows are none (4.6)', () => {
+  const result = classify([
+    OLD_HEADER,
+    ['A', 30],
+    ['B', 'abc'],
+    ['', 5],
+    ['a', 7],
+  ]);
+  assert.deepEqual(result.rules, [{ labelName: 'A', retentionDays: 30 }]);
+  assert.deepEqual(result.rowClasses, ['explicit', 'none', 'blank', 'duplicate']);
+  assert.deepEqual(result.invalidLabels, []);
+});
+
+test('collectExplicitRules: old format and migrated new format yield identical rules (4.6)', () => {
+  const oldValues = [
+    OLD_HEADER,
+    ['Newsletter', 30],
+    ['Promo', '7'],
+    ['Broken', 'abc'],
+    ['', 10],
+    ['promo', 99],
+    ['Work/Reports', 14],
+    ['Zero', 0],
+  ];
+  // planMigration 後を手書きで再現: 有効行は true、無効行は false。既存の値は変えない。
+  const migratedValues = [
+    ['対象', 'ラベル名', '保持日数', '適用日数', '状態'],
+    [true, 'Newsletter', 30, '', ''],
+    [true, 'Promo', '7', '', ''],
+    [false, 'Broken', 'abc', '', ''],
+    [false, '', 10, '', ''],
+    [true, 'promo', 99, '', ''],
+    [true, 'Work/Reports', 14, '', ''],
+    [false, 'Zero', 0, '', ''],
+  ];
+  const oldResult = classify(oldValues);
+  const newResult = classify(migratedValues);
+  assert.deepEqual(oldResult.rules, [
+    { labelName: 'Newsletter', retentionDays: 30 },
+    { labelName: 'Promo', retentionDays: 7 },
+    { labelName: 'Work/Reports', retentionDays: 14 },
+  ]);
+  assert.deepEqual(newResult.rules, oldResult.rules);
+  assert.deepEqual(newResult.invalidLabels, []);
+});

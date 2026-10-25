@@ -8,6 +8,7 @@
  *
  * `openConfigSheet` は Script Property が指す設定シートを開く（SpreadsheetApp 依存）。
  * `resolveColumns` はヘッダ行から列位置を解決する純粋関数。
+ * `collectExplicitRules` はデータ行を分類し明示ルールを決める純粋関数。
  * `readArchiveRules` は設定シートを読み、検証済みルールを返す。
  * `expandRules` は明示ルールを子孫ラベルへ展開する純粋関数。
  */
@@ -117,6 +118,108 @@ function resolveColumns(header) {
     appliedDays: findHeaderColumn_(header, HEADER_APPLIED_DAYS),
     status: findHeaderColumn_(header, HEADER_STATUS),
   };
+}
+
+/**
+ * @typedef {'explicit'|'invalid'|'duplicate'|'none'|'blank'} RowClass
+ *   explicit  明示ルールとして採用された行
+ *   invalid   対象にチェックがあるが保持日数が無効な行（新形式のみ）
+ *   duplicate 同じ照合キーの別の行が explicit として採用されている行
+ *   none      明示設定なし（未チェック、または旧形式で日数が無効）
+ *   blank     ラベル名が空の行
+ */
+
+/**
+ * @typedef {Object} ExplicitRuleSet
+ * @property {ArchiveRule[]} rules        explicit 行のルール（行順、照合キーで一意）
+ * @property {string[]}      invalidLabels invalid 行のラベル名（行順）
+ * @property {RowClass[]}    rowClasses   データ行ごとの分類（values の 2 行目以降と同じ長さ）
+ */
+
+/**
+ * データ行を分類し、明示ルールを決める純粋関数（読取と同期表示の唯一の判定元）。
+ * 副作用なし。
+ *
+ * 1 巡目（行順）:
+ * - ラベル名が空 → blank（3.2）。
+ * - 候補判定: 旧形式（target が -1）は全行が候補、新形式は 対象 === true の行のみ
+ *   候補（3.1, 3.6）。候補でない → none（未チェック行の保持日数は見ない、3.6）。
+ * - validateRow が無効 → 新形式は invalid（3.4）、旧形式は none（現行どおり黙ってスキップ）。
+ * - 有効で、同じ照合キーの explicit がまだ無い → explicit（明示ルールになる行のうち
+ *   上を優先、3.7）。既にある → duplicate。
+ * 2 巡目: explicit が存在する照合キーを持つ、explicit 以外の行（none / invalid）を
+ *   duplicate に変える。invalidLabels は 2 巡目の後に invalid のまま残った行から作る
+ *   （同じラベルが別の行で有効なら警告しない、3.5）。
+ * 旧形式と、それを移行した新形式とで rules が一致する（4.6）。
+ *
+ * @param {Array<Array<*>>} values ヘッダ込みの全セル値
+ * @param {ColumnMap} columns resolveColumns の戻り値
+ * @returns {ExplicitRuleSet}
+ */
+function collectExplicitRules(values, columns) {
+  const isOldFormat = columns.target === -1;
+  const rules = [];
+  const rowClasses = [];
+  const rowKeys = [];
+  const rowLabels = [];
+  const explicitKeys = {};
+
+  // 1 巡目: 行順に分類し、明示ルールを先勝ちで決める。
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i];
+    const rawLabel = row[columns.label];
+    const labelName = String(rawLabel == null ? '' : rawLabel).trim();
+    rowLabels.push(labelName);
+
+    // ラベル名が空 → blank（3.2）。
+    if (labelName === '') {
+      rowKeys.push(null);
+      rowClasses.push('blank');
+      continue;
+    }
+    const key = labelKey(labelName);
+    rowKeys.push(key);
+
+    // 候補判定: 新形式は 対象 === true のみ（3.1, 3.6）。旧形式は全行。
+    const isCandidate = isOldFormat || row[columns.target] === true;
+    if (!isCandidate) {
+      rowClasses.push('none');
+      continue;
+    }
+
+    // 保持日数の検証。無効なら新形式は invalid（3.4）、旧形式は none。
+    const rule = validateRow(rawLabel, row[columns.days]);
+    if (rule === null) {
+      rowClasses.push(isOldFormat ? 'none' : 'invalid');
+      continue;
+    }
+
+    // 同じ照合キーの explicit が未採用なら採用（上を優先、3.7）。
+    if (Object.prototype.hasOwnProperty.call(explicitKeys, key)) {
+      rowClasses.push('duplicate');
+    } else {
+      explicitKeys[key] = true;
+      rules.push(rule);
+      rowClasses.push('explicit');
+    }
+  }
+
+  // 2 巡目: explicit がある照合キーの none / invalid 行を duplicate に変え、
+  // invalid のまま残った行だけを invalidLabels にする（3.5）。
+  const invalidLabels = [];
+  for (let j = 0; j < rowClasses.length; j++) {
+    const cls = rowClasses[j];
+    if (cls !== 'none' && cls !== 'invalid') {
+      continue;
+    }
+    if (Object.prototype.hasOwnProperty.call(explicitKeys, rowKeys[j])) {
+      rowClasses[j] = 'duplicate';
+    } else if (cls === 'invalid') {
+      invalidLabels.push(rowLabels[j]);
+    }
+  }
+
+  return { rules, invalidLabels, rowClasses };
 }
 
 /**
@@ -273,6 +376,7 @@ if (typeof module !== 'undefined' && module.exports) {
     validateRow,
     openConfigSheet,
     resolveColumns,
+    collectExplicitRules,
     readArchiveRules,
     expandRules,
     labelKey,
