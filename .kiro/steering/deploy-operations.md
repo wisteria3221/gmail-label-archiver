@@ -18,6 +18,8 @@ main へ push → test ジョブ（npm test）→ [成功時のみ] deploy ジ�
 - ワークフロー定義は `.github/workflows/deploy.yml` の 1 本のみ。
 - `deploy` は `needs: test` でゲートされる。テスト失敗時は deploy がスキップされ、ワークフロー全体が failure になる。
 - `concurrency: deploy-gas` / `cancel-in-progress: false` で deploy を直列化する。連続 push 時に `clasp push` が並走して GAS 側を競合更新するのを防ぐため、実行中のデプロイは中断せず順番待ちにする。
+- `permissions: contents: read` で `GITHUB_TOKEN` を読み取りのみに絞る。ワークフローはリポジトリへ書き込まず、GAS への反映は clasp の Secret 認証で行うため。
+- 公式 actions（`actions/checkout` / `actions/setup-node`）はメジャーバージョン指定（現行 `@v5`）とし、SHA 固定はしない（個人運用で更新の手間を優先）。GitHub がランナーの Node ランタイムを非推奨にした際はメジャーを上げる。
 
 ## Secret とその WHY
 

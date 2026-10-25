@@ -13,6 +13,11 @@ concurrency:
   group: deploy-gas
   cancel-in-progress: false
 
+# GITHUB_TOKEN はリポジトリの読み取りのみに絞る（push・PR 操作は不要。
+# GAS への反映は clasp の Secret 認証で行う）。
+permissions:
+  contents: read
+
 jobs:
   # 既存テストスイートをデプロイゲートとして実行する。
   # 外部依存（npm dependencies）が無いためインストール手順は不要。
@@ -22,10 +27,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Node.js 20
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '20'
 
@@ -41,10 +46,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Node.js 20
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '20'
 
