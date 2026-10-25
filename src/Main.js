@@ -15,18 +15,20 @@
  *   処理し `{ labelName, archivedCount, candidateCount }` を返す（6.8）。
  * - `MAX_THREADS_PER_RUN`（Constants）: 実行全体の処理上限。
  *
- * setupDailyTrigger / removeAllTriggers は本ファイルに後続タスク（4.2）で追加される。
+ * 失敗時の方針: GAS のトリガー失敗通知メールは例外送出時にしか送られないため、
+ * 構成不備・ラベル一覧取得失敗はログ後に再 throw し、ルール単位のエラーは全ルール処理と
+ * サマリ出力を終えた後にまとめて throw する（無人運用で失敗に気づけるようにする）。
  */
 
 /**
  * トリガー／手動共通のアーカイブエントリ（引数なし、4.3）。
  *
  * 1. `readArchiveRules()` で検証済みルールを取得。構成不備（throw）は
- *    ログに記録して正常終了（再 throw しない、Error Strategy 構成不備）。
+ *    ログに記録して再 throw する（トリガー失敗通知を発火させる、Error Strategy 構成不備）。
  * 2. 明示ルール 0 件なら、ラベル取得・展開を行わず短絡終了（1.3）。
  *    Gmail への往復を避けるため、`listUserLabelNames`/`expandRules` より前で return する。
  * 3. 1 件以上なら `listUserLabelNames()` で全ラベル名を取得し（失敗時はログして
- *    正常終了、再 throw しない）、`expandRules(rules, labelNames)` で対象を子孫へ展開（6.1）。
+ *    再 throw）、`expandRules(rules, labelNames)` で対象を子孫へ展開（6.1）。
  * 4. 残予算 `remaining` を `MAX_THREADS_PER_RUN` で初期化し、実行全体で 1 つの
  *    `seenThreadIds`（処理済みスレッド ID 集合、6.8）を生成して各ルールを順に処理。
  *    - `remaining <= 0` で以降のルールをスキップ（実行全体の予算枯渇、次回持ち越し、5.1）。
@@ -35,11 +37,13 @@
  *      スレッドの実行内重複を防ぐ（6.8）。
  *    - ルール単位 try/catch でエラーを記録し次ルールへ継続（5.2）。
  * 5. 実行サマリ（処理ルール数・ルール別件数・エラー数・残予算）を標準ログへ出力（5.4）。
+ * 6. ルール単位のエラーが 1 件以上あれば、サマリ出力後に throw する（失敗通知）。
  *
  * @returns {void}
+ * @throws {Error} 構成不備・ラベル一覧取得失敗・ルール単位エラーが 1 件以上あった場合
  */
 function archiveLabeledThreads() {
-  // 1. 設定読取（構成不備はログして正常終了、Error Strategy 構成不備）。
+  // 1. 設定読取（構成不備はログして再 throw、Error Strategy 構成不備）。
   let rules;
   try {
     rules = readArchiveRules();
@@ -48,7 +52,7 @@ function archiveLabeledThreads() {
       '⚠️ [エラー] 設定の読み取りに失敗したため処理を中止しました（設定内容を確認してください）: ' +
         errorMessage(err)
     );
-    return;
+    throw err;
   }
 
   // 2. 明示ルール 0 件 → ラベル取得・展開を行わず短絡終了（1.3、Gmail 往復なし）。
@@ -58,7 +62,7 @@ function archiveLabeledThreads() {
   }
 
   // 3. 全ラベル名を取得し、明示ルールを子孫ラベルへ展開（6.1）。
-  //    ラベル取得失敗はログして正常終了（再 throw しない）。
+  //    ラベル取得失敗はログして再 throw（失敗通知）。
   let labelNames;
   try {
     labelNames = listUserLabelNames();
@@ -67,7 +71,7 @@ function archiveLabeledThreads() {
       '⚠️ [エラー] ラベル一覧の取得に失敗したため処理を中止しました: ' +
         errorMessage(err)
     );
-    return;
+    throw err;
   }
   rules = expandRules(rules, labelNames);
 
@@ -119,6 +123,13 @@ function archiveLabeledThreads() {
       perRule.join(', ') +
       ']'
   );
+
+  // 6. ルール単位のエラーがあれば、全ルール処理・サマリ出力後に throw（失敗通知）。
+  if (errorCount > 0) {
+    throw new Error(
+      errorCount + '件のルールでエラーが発生しました（詳細は実行ログを参照）。'
+    );
+  }
 }
 
 /**

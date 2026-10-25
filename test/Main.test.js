@@ -115,9 +115,17 @@ test('budget exhaustion: later rules are skipped (5.1)', () => {
   cleanup();
 });
 
-// --- 5.2: ルール単位エラー → 記録して次ルールへ継続 ---
+// --- 5.2: ルール単位エラー → 記録して次ルールへ継続し、最後に throw（失敗通知） ---
 
-test('per-rule error: subsequent rule still processed, no throw (5.2)', () => {
+/** console.log を差し替えて出力行を収集する。戻り値の restore() で元に戻す。 */
+function captureLog() {
+  const lines = [];
+  const original = console.log;
+  console.log = (line) => lines.push(String(line));
+  return { lines, restore: () => (console.log = original) };
+}
+
+test('per-rule error: subsequent rule still processed, then throws for failure notification (5.2)', () => {
   const rules = [
     { labelName: 'A', retentionDays: 30 },
     { labelName: 'B', retentionDays: 30 },
@@ -135,11 +143,20 @@ test('per-rule error: subsequent rule still processed, no throw (5.2)', () => {
     return { labelName: rule.labelName, archivedCount: 1, candidateCount: 1 };
   };
 
-  assert.doesNotThrow(() => archiveLabeledThreads());
+  const log = captureLog();
+  try {
+    assert.throws(() => archiveLabeledThreads(), /1件のルールでエラー/);
+  } finally {
+    log.restore();
+  }
   assert.deepEqual(
     calledLabels,
     ['A', 'B', 'C'],
     'rule C must still be processed after rule B throws'
+  );
+  assert.ok(
+    log.lines.some((l) => l.startsWith('📊 [サマリ]')),
+    'summary must be logged before throwing'
   );
 
   cleanup();
@@ -210,9 +227,9 @@ test('seenThreadIds shared: same Set instance passed to every archiveRule call (
   cleanup();
 });
 
-// --- ラベル取得失敗 → ログして正常終了（再throwしない、archiveRule 未呼び出し） ---
+// --- ラベル取得失敗 → ログして throw（失敗通知、archiveRule 未呼び出し） ---
 
-test('listUserLabelNames failure: archiveLabeledThreads does not throw, archiveRule never called', () => {
+test('listUserLabelNames failure: archiveLabeledThreads throws, archiveRule never called', () => {
   let archiveCalls = 0;
   globalThis.readArchiveRules = () => [{ labelName: 'Work', retentionDays: 30 }];
   globalThis.listUserLabelNames = () => {
@@ -223,19 +240,19 @@ test('listUserLabelNames failure: archiveLabeledThreads does not throw, archiveR
     return { labelName: 'x', archivedCount: 0, candidateCount: 0 };
   };
 
-  assert.doesNotThrow(() => archiveLabeledThreads());
+  assert.throws(() => archiveLabeledThreads(), /Gmail label fetch failed/);
   assert.equal(
     archiveCalls,
     0,
-    'archiveRule must not run when label fetch fails (log and return normally)'
+    'archiveRule must not run when label fetch fails'
   );
 
   cleanup();
 });
 
-// --- Error Strategy（構成不備）: readArchiveRules が throw → 終了（再throwしない） ---
+// --- Error Strategy（構成不備）: readArchiveRules が throw → ログして再 throw（失敗通知） ---
 
-test('config error: readArchiveRules throws → archiveLabeledThreads does not throw, archiveRule never called', () => {
+test('config error: readArchiveRules throws → archiveLabeledThreads rethrows, archiveRule never called', () => {
   let archiveCalls = 0;
   globalThis.readArchiveRules = () => {
     throw new Error('missing CONFIG_SPREADSHEET_ID');
@@ -245,7 +262,7 @@ test('config error: readArchiveRules throws → archiveLabeledThreads does not t
     return { labelName: 'x', archivedCount: 0, candidateCount: 0 };
   };
 
-  assert.doesNotThrow(() => archiveLabeledThreads());
+  assert.throws(() => archiveLabeledThreads(), /missing CONFIG_SPREADSHEET_ID/);
   assert.equal(archiveCalls, 0, 'archiveRule must not run when config read fails');
 
   cleanup();
