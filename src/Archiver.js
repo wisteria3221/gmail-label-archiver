@@ -73,6 +73,8 @@ function hasStar(thread) {
  * 1 ルール分の対象を抽出し、残予算の範囲内で標準アーカイブする。
  *
  * 1. 残予算 `remaining ≤ 0` なら検索せず空動作（予算枯渇、5.1）。
+ *    ラベル名に二重引用符を含む場合も、Gmail 検索でのエスケープ方法が保証されず
+ *    クエリを正しく組めないため、検索せずスキップ理由をログして空動作する。
  * 2. `buildQuery(rule)` でクエリを生成し、`ARCHIVE_SEARCH_LIMIT` 件ずつ
  *    `GmailApp.search` でページングして候補を取得する。検索の `older_than` /
  *    `-is:starred` はメッセージ単位で効くため、「最近の返信がある」「一部だけ
@@ -108,6 +110,10 @@ function archiveRule(rule, now, remaining, seenThreadIds) {
   // 1. 予算枯渇：検索せず空動作（5.1）。
   if (remaining <= 0) {
     logSummary(rule.labelName, 0, 0);
+    return { labelName: rule.labelName, archivedCount: 0, candidateCount: 0 };
+  }
+  if (rule.labelName.indexOf('"') !== -1) {
+    logLabelSkipped(rule.labelName);
     return { labelName: rule.labelName, archivedCount: 0, candidateCount: 0 };
   }
 
@@ -178,6 +184,22 @@ function logSummary(labelName, archivedCount, candidateCount) {
     '件 / 候補 ' +
     candidateCount +
     '件';
+  if (typeof console !== 'undefined' && console.log) {
+    console.log(line);
+  }
+}
+
+/**
+ * 二重引用符を含むラベル名をスキップした旨を標準ログへ出力する（出力先は
+ * `logSummary` と同じく `console.log` に統一）。
+ *
+ * @param {string} labelName
+ */
+function logLabelSkipped(labelName) {
+  const line =
+    'ℹ️ [スキップ] ラベル「' +
+    labelName +
+    '」は名前に二重引用符 (") を含み検索できないため、処理をスキップしました（ラベル名の変更を検討してください）。';
   if (typeof console !== 'undefined' && console.log) {
     console.log(line);
   }

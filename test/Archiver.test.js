@@ -498,3 +498,42 @@ test('listUserLabelNames: empty label list -> empty array (6.1)', () => {
   globalThis.GmailApp = { getUserLabels: () => [] };
   assert.deepEqual(listUserLabelNames(), []);
 });
+
+// --- archiveRule: 二重引用符を含むラベル名は検索クエリを組めないためスキップ ---
+
+test('archiveRule: label containing double quote is skipped without searching', () => {
+  let searched = false;
+  globalThis.GmailApp = {
+    search: () => {
+      searched = true;
+      return [oldUnstarred()];
+    },
+    moveThreadsToArchive: () => {
+      throw new Error('must not archive');
+    },
+  };
+  const lines = [];
+  const original = console.log;
+  console.log = (line) => lines.push(String(line));
+  let result;
+  try {
+    result = archiveRule(
+      { labelName: 'Say "hi"', retentionDays: 30 },
+      RULE_NOW,
+      300
+    );
+  } finally {
+    console.log = original;
+  }
+
+  assert.equal(searched, false);
+  assert.deepEqual(result, {
+    labelName: 'Say "hi"',
+    archivedCount: 0,
+    candidateCount: 0,
+  });
+  assert.ok(
+    lines.some((l) => l.startsWith('ℹ️ [スキップ]') && l.includes('「Say "hi"」')),
+    'skip reason must be logged with the label name'
+  );
+});

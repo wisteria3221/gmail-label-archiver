@@ -42,7 +42,7 @@ function logLine(line) {
 | `✅ [アーカイブ完了]` | ルール単位のアーカイブ結果（件数報告） | `logSummary`（Archiver.js） |
 | `📊 [サマリ]` | 実行全体のサマリ（処理ルール数・エラー数・残予算） | `archiveLabeledThreads`（Main.js） |
 | `⚠️ [エラー]` | 設定読取失敗・ルール単位の処理失敗 | `archiveLabeledThreads`（Main.js） |
-| `ℹ️ [スキップ]` | 対象ルール 0 件などで処理を行わなかった旨 | `archiveLabeledThreads`（Main.js） |
+| `ℹ️ [スキップ]` | 対象ルール 0 件・検索できないラベル名などで処理を行わなかった旨 | `archiveLabeledThreads`（Main.js）、`logLabelSkipped`（Archiver.js） |
 
 実例:
 
