@@ -1,6 +1,7 @@
 'use strict';
 
 const test = require('node:test');
+const { beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 
 const Constants = require('../src/Constants.js');
@@ -15,16 +16,28 @@ globalThis.expandRules = expandRules;
 const { archiveLabeledThreads, setupDailyTrigger, removeAllTriggers } = require('../src/Main.js');
 
 /**
- * 各テストで globalThis 上の readArchiveRules / archiveRule / listUserLabelNames
- * を差し替える。console.log / Logger を残さないよう、テスト後にクリーンアップする。
+ * 各テストで globalThis 上の readArchiveRules / archiveRule / listUserLabelNames /
+ * syncLabelSheet を差し替える。console.log / Logger を残さないよう、テスト後にクリーンアップする。
  * expandRules は実装（Config.js）を共有するため削除しない。
  */
 function cleanup() {
+  delete globalThis.syncLabelSheet;
   delete globalThis.readArchiveRules;
   delete globalThis.archiveRule;
   delete globalThis.listUserLabelNames;
   delete globalThis.Logger;
 }
+
+/** 成功する syncLabelSheet の既定スタブ（移行なし、追加 0 件 / 不在 0 件）。 */
+function defaultSyncResult() {
+  return { migrated: false, migratedCheckedCount: 0, appendedCount: 0, missingCount: 0 };
+}
+
+// 5.1: archiveLabeledThreads は冒頭で syncLabelSheet を呼ぶ。全テストに成功する既定スタブを置き、
+// 同期の振る舞いを検証するテストだけが個別に差し替える（cleanup() で削除）。
+beforeEach(() => {
+  globalThis.syncLabelSheet = () => defaultSyncResult();
+});
 
 // --- 1.3: 有効ルール 0 件 → 何もせず正常終了 ---
 
@@ -320,6 +333,268 @@ test('config error: readArchiveRules throws → archiveLabeledThreads rethrows, 
   assert.throws(() => archiveLabeledThreads(), /missing CONFIG_SPREADSHEET_ID/);
   assert.equal(archiveCalls, 0, 'archiveRule must not run when config read fails');
 
+  cleanup();
+});
+
+// --- label-sheet-sync: 日次実行冒頭の同期と、同期失敗・無効行のログ／通知（5.1, 6.1, 3.5, 4.7, 5.3, 3.8） ---
+
+test('sync step: syncLabelSheet is called before readArchiveRules (5.1)', () => {
+  const order = [];
+  globalThis.syncLabelSheet = () => {
+    order.push('sync');
+    return defaultSyncResult();
+  };
+  globalThis.readArchiveRules = () => {
+    order.push('read');
+    return { rules: [{ labelName: 'A', retentionDays: 30 }], invalidLabels: [] };
+  };
+  globalThis.listUserLabelNames = () => ['A'];
+  globalThis.archiveRule = (rule) => ({ labelName: rule.labelName, archivedCount: 0, candidateCount: 0 });
+
+  const log = captureLog();
+  try {
+    archiveLabeledThreads();
+  } finally {
+    log.restore();
+  }
+  assert.deepEqual(order, ['sync', 'read']);
+  cleanup();
+});
+
+test('sync failure: archive and summary still run, then throws once (6.1)', () => {
+  const calledLabels = [];
+  globalThis.syncLabelSheet = () => {
+    throw new Error('lock timeout');
+  };
+  globalThis.readArchiveRules = () => ({
+    rules: [{ labelName: 'A', retentionDays: 30 }],
+    invalidLabels: [],
+  });
+  globalThis.listUserLabelNames = () => ['A'];
+  globalThis.archiveRule = (rule) => {
+    calledLabels.push(rule.labelName);
+    return { labelName: rule.labelName, archivedCount: 1, candidateCount: 1 };
+  };
+
+  const log = captureLog();
+  let thrown;
+  try {
+    archiveLabeledThreads();
+  } catch (err) {
+    thrown = err;
+  } finally {
+    log.restore();
+  }
+  assert.ok(thrown, 'must throw after archiving when sync failed');
+  assert.match(thrown.message, /ラベル一覧の同期に失敗しました/);
+  assert.doesNotMatch(thrown.message, /ルールでエラー/);
+  assert.deepEqual(calledLabels, ['A'], 'archive must continue after sync failure');
+  const failLine =
+    '⚠️ [エラー] ラベル一覧の同期に失敗しました。現在の設定でアーカイブを続行し、終了時にエラーとして通知します: lock timeout';
+  assert.equal(log.lines.filter((l) => l === failLine).length, 1, log.lines.join('\n'));
+  const summaryIdx = log.lines.findIndex((l) => l.startsWith('📊 [サマリ]'));
+  assert.ok(summaryIdx > log.lines.indexOf(failLine), 'summary must be logged after the sync failure line');
+  assert.ok(!log.lines.some((l) => l.startsWith('✅ [同期完了]')), 'no sync-complete line on failure');
+  cleanup();
+});
+
+test('sync failure with 0 rules: throws instead of returning (3.8, 6.1)', () => {
+  let labelListCalls = 0;
+  globalThis.syncLabelSheet = () => {
+    throw new Error('Gmail down');
+  };
+  globalThis.readArchiveRules = () => ({ rules: [], invalidLabels: [] });
+  globalThis.listUserLabelNames = () => {
+    labelListCalls += 1;
+    return [];
+  };
+  globalThis.archiveRule = () => {
+    throw new Error('must not be called');
+  };
+
+  const log = captureLog();
+  try {
+    assert.throws(() => archiveLabeledThreads(), /ラベル一覧の同期に失敗しました/);
+  } finally {
+    log.restore();
+  }
+  assert.equal(labelListCalls, 0, '0-rule short-circuit still skips listUserLabelNames');
+  assert.ok(log.lines.some((l) => l.startsWith('ℹ️ [スキップ] 対象のルールが無いため')));
+  cleanup();
+});
+
+test('sync failure + rule errors: a single throw mentions both causes (6.1, 5.2)', () => {
+  globalThis.syncLabelSheet = () => {
+    throw new Error('write failed');
+  };
+  globalThis.readArchiveRules = () => ({
+    rules: [
+      { labelName: 'A', retentionDays: 30 },
+      { labelName: 'B', retentionDays: 30 },
+      { labelName: 'C', retentionDays: 30 },
+    ],
+    invalidLabels: [],
+  });
+  globalThis.listUserLabelNames = () => ['A', 'B', 'C'];
+  globalThis.archiveRule = (rule) => {
+    if (rule.labelName !== 'B') {
+      throw new Error('boom ' + rule.labelName);
+    }
+    return { labelName: rule.labelName, archivedCount: 0, candidateCount: 0 };
+  };
+
+  const log = captureLog();
+  try {
+    assert.throws(
+      () => archiveLabeledThreads(),
+      (err) => {
+        assert.equal(
+          err.message,
+          'ラベル一覧の同期に失敗しました / 2件のルールでエラーが発生しました（詳細は実行ログを参照）。'
+        );
+        return true;
+      }
+    );
+  } finally {
+    log.restore();
+  }
+  assert.ok(log.lines.some((l) => l.startsWith('📊 [サマリ]')));
+  cleanup();
+});
+
+test('rule errors only: message keeps the existing wording (5.2)', () => {
+  globalThis.readArchiveRules = () => ({
+    rules: [{ labelName: 'A', retentionDays: 30 }],
+    invalidLabels: [],
+  });
+  globalThis.listUserLabelNames = () => ['A'];
+  globalThis.archiveRule = () => {
+    throw new Error('boom');
+  };
+
+  const log = captureLog();
+  try {
+    assert.throws(
+      () => archiveLabeledThreads(),
+      (err) => {
+        assert.equal(err.message, '1件のルールでエラーが発生しました（詳細は実行ログを参照）。');
+        return true;
+      }
+    );
+  } finally {
+    log.restore();
+  }
+  cleanup();
+});
+
+test('invalidLabels: one ℹ️ skip line per label, without throwing (3.5)', () => {
+  globalThis.readArchiveRules = () => ({
+    rules: [{ labelName: 'A', retentionDays: 30 }],
+    invalidLabels: ['X', 'Work/Y'],
+  });
+  globalThis.listUserLabelNames = () => ['A', 'X', 'Work/Y'];
+  globalThis.archiveRule = (rule) => ({ labelName: rule.labelName, archivedCount: 0, candidateCount: 0 });
+
+  const log = captureLog();
+  try {
+    assert.doesNotThrow(() => archiveLabeledThreads());
+  } finally {
+    log.restore();
+  }
+  const skipLines = log.lines.filter((l) => l.includes('保持日数が無効なためスキップしました'));
+  assert.deepEqual(skipLines, [
+    'ℹ️ [スキップ] ラベル「X」は対象にチェックがありますが、保持日数が無効なためスキップしました（正の整数を入力してください）。',
+    'ℹ️ [スキップ] ラベル「Work/Y」は対象にチェックがありますが、保持日数が無効なためスキップしました（正の整数を入力してください）。',
+  ]);
+  cleanup();
+});
+
+test('invalidLabels are logged even when there are 0 rules (3.5, 3.8)', () => {
+  globalThis.readArchiveRules = () => ({ rules: [], invalidLabels: ['X'] });
+  globalThis.listUserLabelNames = () => [];
+  globalThis.archiveRule = () => {
+    throw new Error('must not be called');
+  };
+
+  const log = captureLog();
+  try {
+    assert.doesNotThrow(() => archiveLabeledThreads());
+  } finally {
+    log.restore();
+  }
+  assert.equal(
+    log.lines.filter((l) => l.startsWith('ℹ️ [スキップ] ラベル「X」は対象にチェックがありますが')).length,
+    1
+  );
+  cleanup();
+});
+
+test('sync success without migration: logs 同期完了 once and no 移行完了 (5.3, 4.7)', () => {
+  globalThis.syncLabelSheet = () => ({
+    migrated: false,
+    migratedCheckedCount: 0,
+    appendedCount: 3,
+    missingCount: 1,
+  });
+  globalThis.readArchiveRules = () => ({ rules: [], invalidLabels: [] });
+
+  const log = captureLog();
+  try {
+    archiveLabeledThreads();
+  } finally {
+    log.restore();
+  }
+  assert.deepEqual(
+    log.lines.filter((l) => l.startsWith('✅ [同期完了]')),
+    ['✅ [同期完了] ラベル一覧を同期しました: 追加 3件 / Gmail に存在しない 1件']
+  );
+  assert.ok(!log.lines.some((l) => l.startsWith('✅ [移行完了]')), 'no migration line when not migrated');
+  cleanup();
+});
+
+test('sync success with migration: logs 移行完了 then 同期完了, once each (4.7, 5.3)', () => {
+  globalThis.syncLabelSheet = () => ({
+    migrated: true,
+    migratedCheckedCount: 5,
+    appendedCount: 0,
+    missingCount: 0,
+  });
+  globalThis.readArchiveRules = () => ({ rules: [], invalidLabels: [] });
+
+  const log = captureLog();
+  try {
+    archiveLabeledThreads();
+  } finally {
+    log.restore();
+  }
+  const migLine = '✅ [移行完了] 設定シートを新しい形式に移行しました: 対象にチェック 5件';
+  const syncLine = '✅ [同期完了] ラベル一覧を同期しました: 追加 0件 / Gmail に存在しない 0件';
+  assert.equal(log.lines.filter((l) => l === migLine).length, 1, log.lines.join('\n'));
+  assert.equal(log.lines.filter((l) => l === syncLine).length, 1, log.lines.join('\n'));
+  assert.ok(log.lines.indexOf(migLine) < log.lines.indexOf(syncLine));
+  cleanup();
+});
+
+test('config error after sync failure: config error is rethrown immediately (6.3, 6.4)', () => {
+  let archiveCalls = 0;
+  globalThis.syncLabelSheet = () => {
+    throw new Error('sheet missing');
+  };
+  globalThis.readArchiveRules = () => {
+    throw new Error('missing CONFIG_SPREADSHEET_ID');
+  };
+  globalThis.archiveRule = () => {
+    archiveCalls += 1;
+    return { labelName: 'x', archivedCount: 0, candidateCount: 0 };
+  };
+
+  const log = captureLog();
+  try {
+    assert.throws(() => archiveLabeledThreads(), /missing CONFIG_SPREADSHEET_ID/);
+  } finally {
+    log.restore();
+  }
+  assert.equal(archiveCalls, 0);
   cleanup();
 });
 
