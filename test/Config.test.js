@@ -9,6 +9,7 @@ const Constants = require('../src/Constants.js');
 Object.assign(globalThis, Constants);
 
 const { validateRow, readArchiveRules, expandRules } = require('../src/Config.js');
+const { openConfigSheet, resolveColumns, labelKey } = require('../src/Config.js');
 
 /**
  * Install per-test mocks of the GAS global services on globalThis.
@@ -341,4 +342,108 @@ test('expandRules: explicit rules differing only in case are deduped (first wins
     { labelName: 'Work', retentionDays: 30 },
     { labelName: 'Work/Sub', retentionDays: 30 },
   ]);
+});
+
+// --- openConfigSheet (6.3) ---
+
+test('openConfigSheet: missing CONFIG_SPREADSHEET_ID throws with current message (6.3)', () => {
+  setupGas({ props: {}, sheets: {} });
+  assert.throws(openConfigSheet, {
+    message:
+      'Script Property "CONFIG_SPREADSHEET_ID" が未設定です。設定スプレッドシートの ID を登録してください。',
+  });
+});
+
+test('openConfigSheet: empty CONFIG_SPREADSHEET_ID throws (6.3)', () => {
+  setupGas({ props: { CONFIG_SPREADSHEET_ID: '' }, sheets: {} });
+  assert.throws(openConfigSheet, /CONFIG_SPREADSHEET_ID/);
+});
+
+test('openConfigSheet: sheet not found throws with current message (6.3)', () => {
+  setupGas({
+    props: { CONFIG_SPREADSHEET_ID: 'id1', CONFIG_SHEET_NAME: 'missing' },
+    sheets: { settings: [['ラベル名', '保持日数']] },
+  });
+  assert.throws(openConfigSheet, {
+    message: '設定シート "missing" が見つかりません（構成不備）。',
+  });
+});
+
+test('openConfigSheet: returns the sheet named by CONFIG_SHEET_NAME', () => {
+  const custom = [['ラベル名', '保持日数'], ['A', '5']];
+  setupGas({
+    props: { CONFIG_SPREADSHEET_ID: 'id1', CONFIG_SHEET_NAME: 'custom' },
+    sheets: { custom: custom, settings: [['ラベル名', '保持日数']] },
+  });
+  assert.equal(openConfigSheet().getDataRange().getValues(), custom);
+});
+
+test('openConfigSheet: absent CONFIG_SHEET_NAME opens DEFAULT_SHEET_NAME', () => {
+  const settings = [['ラベル名', '保持日数']];
+  setupGas({ props: { CONFIG_SPREADSHEET_ID: 'id1' }, sheets: { settings: settings } });
+  assert.equal(openConfigSheet().getDataRange().getValues(), settings);
+});
+
+// --- resolveColumns (2.4) ---
+
+test('resolveColumns: resolves all five columns in canonical order (2.4)', () => {
+  assert.deepEqual(
+    resolveColumns(['対象', 'ラベル名', '保持日数', '適用日数', '状態']),
+    { target: 0, label: 1, days: 2, appliedDays: 3, status: 4 }
+  );
+});
+
+test('resolveColumns: is independent of column order (2.4)', () => {
+  assert.deepEqual(
+    resolveColumns(['状態', '保持日数', '適用日数', 'ラベル名', '対象']),
+    { target: 4, label: 3, days: 1, appliedDays: 2, status: 0 }
+  );
+});
+
+test('resolveColumns: ignores surrounding whitespace in header cells (2.4)', () => {
+  assert.deepEqual(
+    resolveColumns([' 対象', 'ラベル名 ', '  保持日数  ', '\t適用日数', '状態\n']),
+    { target: 0, label: 1, days: 2, appliedDays: 3, status: 4 }
+  );
+});
+
+test('resolveColumns: missing columns resolve to -1 (legacy two-column sheet)', () => {
+  assert.deepEqual(resolveColumns(['ラベル名', '保持日数']), {
+    target: -1,
+    label: 0,
+    days: 1,
+    appliedDays: -1,
+    status: -1,
+  });
+});
+
+test('resolveColumns: partially missing columns resolve to -1 (6.4)', () => {
+  assert.deepEqual(resolveColumns(['メモ', '対象', '状態', null, '']), {
+    target: 1,
+    label: -1,
+    days: -1,
+    appliedDays: -1,
+    status: 2,
+  });
+});
+
+test('resolveColumns: empty header resolves every column to -1', () => {
+  assert.deepEqual(resolveColumns([]), {
+    target: -1,
+    label: -1,
+    days: -1,
+    appliedDays: -1,
+    status: -1,
+  });
+});
+
+test('resolveColumns: duplicated header name resolves to the first occurrence', () => {
+  assert.equal(resolveColumns(['ラベル名', 'ラベル名', '保持日数']).label, 0);
+});
+
+// --- labelKey ---
+
+test('labelKey: returns lower-cased match key', () => {
+  assert.equal(labelKey('Work/Sub'), 'work/sub');
+  assert.equal(labelKey('仕事'), '仕事');
 });
