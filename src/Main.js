@@ -5,11 +5,12 @@
  * 連結される。本ファイルの top-level 関数 `archiveLabeledThreads` はそのまま
  * グローバル公開され、日次トリガーのハンドラ（`TRIGGER_HANDLER`）かつ手動実行の
  * 共通エントリとなる（4.3：呼び出し元で分岐しない）。
+ * `syncLabels` は同期だけを手動で実行するエントリ（5.2）。
  *
  * 依存（GAS では同一グローバルスコープのグローバル）:
  * - `syncLabelSheet()`（SheetSync）: Gmail のラベル一覧を設定シートへ同期し（旧形式は移行）、
  *   `{ migrated, migratedCheckedCount, appendedCount, missingCount }` を返す／失敗で throw。
- *   日次実行の冒頭で呼ぶ（5.1）。
+ *   日次実行の冒頭（5.1）と手動同期エントリ `syncLabels`（5.2）で呼ぶ。
  * - `readArchiveRules()`（ConfigService）: `{ rules, invalidLabels }`（ConfigReadResult）を
  *   返す／構成不備で throw。`rules`（検証済み明示ルール配列）を処理し、`invalidLabels`
  *   （チェックありで保持日数が無効なラベル名）はスキップのログに使う（3.5）。
@@ -207,6 +208,28 @@ function archiveLabeledThreads() {
 }
 
 /**
+ * 手動で同期だけを実行するエントリ（引数なし、5.2）。GAS エディタから直接実行する。
+ *
+ * `syncLabelSheet()` でラベル一覧を設定シートへ同期し、成功したら日次実行と同じ
+ * 移行完了（移行したときだけ、4.7）・同期完了（5.3）のログを出す。アーカイブ処理
+ *（`readArchiveRules` / `listUserLabelNames` / `archiveRule`）は呼ばない（5.2）。
+ * 失敗したら `⚠️ [エラー]` を 1 行出して元の例外を再 throw し、実行を失敗として終える（6.2）。
+ *
+ * @returns {void}
+ * @throws {Error} 同期に失敗した場合（`syncLabelSheet` の例外をそのまま再 throw）
+ */
+function syncLabels() {
+  let result;
+  try {
+    result = syncLabelSheet();
+  } catch (err) {
+    logLine('⚠️ [エラー] ラベル一覧の同期に失敗しました: ' + errorMessage(err));
+    throw err;
+  }
+  logSyncResult(result);
+}
+
+/**
  * 同期結果を移行・同期のログに出す（4.7, 5.3、1 出来事 1 行）。
  * 移行したときだけ移行完了を出し、同期完了は常に出す。
  *
@@ -318,5 +341,5 @@ function errorMessage(err) {
 
 // Node-only export guard: GAS では `module` が未定義のため評価されない。
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { archiveLabeledThreads, setupDailyTrigger, removeAllTriggers };
+  module.exports = { archiveLabeledThreads, syncLabels, setupDailyTrigger, removeAllTriggers };
 }

@@ -13,7 +13,12 @@ Object.assign(globalThis, Constants);
 const { expandRules } = require('../src/Config.js');
 globalThis.expandRules = expandRules;
 
-const { archiveLabeledThreads, setupDailyTrigger, removeAllTriggers } = require('../src/Main.js');
+const {
+  archiveLabeledThreads,
+  syncLabels,
+  setupDailyTrigger,
+  removeAllTriggers,
+} = require('../src/Main.js');
 
 /**
  * 各テストで globalThis 上の readArchiveRules / archiveRule / listUserLabelNames /
@@ -595,6 +600,112 @@ test('config error after sync failure: config error is rethrown immediately (6.3
     log.restore();
   }
   assert.equal(archiveCalls, 0);
+  cleanup();
+});
+
+// --- 5.2 / 5.3 / 6.2: 手動同期エントリ syncLabels ---
+
+/** アーカイブ側の関数が呼ばれたら回数を数えるスタブを置く（5.2 の検証用）。 */
+function installArchiveSpies() {
+  const calls = { readArchiveRules: 0, listUserLabelNames: 0, archiveRule: 0 };
+  globalThis.readArchiveRules = () => {
+    calls.readArchiveRules += 1;
+    return { rules: [{ labelName: 'A', retentionDays: 30 }], invalidLabels: [] };
+  };
+  globalThis.listUserLabelNames = () => {
+    calls.listUserLabelNames += 1;
+    return ['A'];
+  };
+  globalThis.archiveRule = () => {
+    calls.archiveRule += 1;
+    return { labelName: 'A', archivedCount: 0, candidateCount: 0 };
+  };
+  return calls;
+}
+
+test('syncLabels is exported and takes no arguments (GAS global entry)', () => {
+  assert.equal(typeof syncLabels, 'function');
+  assert.equal(syncLabels.length, 0);
+});
+
+test('syncLabels: runs sync only, never calls archive functions (5.2)', () => {
+  let syncCalls = 0;
+  globalThis.syncLabelSheet = () => {
+    syncCalls += 1;
+    return defaultSyncResult();
+  };
+  const calls = installArchiveSpies();
+
+  const log = captureLog();
+  try {
+    assert.doesNotThrow(() => syncLabels());
+  } finally {
+    log.restore();
+  }
+  assert.equal(syncCalls, 1);
+  assert.deepEqual(calls, { readArchiveRules: 0, listUserLabelNames: 0, archiveRule: 0 });
+  assert.ok(!log.lines.some((l) => l.startsWith('📊 [サマリ]')), 'no archive summary in manual sync');
+  cleanup();
+});
+
+test('syncLabels success: logs exactly one 同期完了 line and no 移行完了 (5.3, 6.5)', () => {
+  globalThis.syncLabelSheet = () => ({
+    migrated: false,
+    migratedCheckedCount: 0,
+    appendedCount: 2,
+    missingCount: 4,
+  });
+
+  const log = captureLog();
+  try {
+    syncLabels();
+  } finally {
+    log.restore();
+  }
+  assert.deepEqual(log.lines, ['✅ [同期完了] ラベル一覧を同期しました: 追加 2件 / Gmail に存在しない 4件']);
+  cleanup();
+});
+
+test('syncLabels success with migration: logs 移行完了 then 同期完了 (4.7, 5.3)', () => {
+  globalThis.syncLabelSheet = () => ({
+    migrated: true,
+    migratedCheckedCount: 3,
+    appendedCount: 1,
+    missingCount: 0,
+  });
+
+  const log = captureLog();
+  try {
+    syncLabels();
+  } finally {
+    log.restore();
+  }
+  assert.deepEqual(log.lines, [
+    '✅ [移行完了] 設定シートを新しい形式に移行しました: 対象にチェック 3件',
+    '✅ [同期完了] ラベル一覧を同期しました: 追加 1件 / Gmail に存在しない 0件',
+  ]);
+  cleanup();
+});
+
+test('syncLabels failure: logs the ⚠️ line once, then rethrows the original error (6.2)', () => {
+  const original = new Error('lock timeout');
+  globalThis.syncLabelSheet = () => {
+    throw original;
+  };
+  const calls = installArchiveSpies();
+
+  const log = captureLog();
+  let thrown;
+  try {
+    syncLabels();
+  } catch (err) {
+    thrown = err;
+  } finally {
+    log.restore();
+  }
+  assert.equal(thrown, original, 'must rethrow the original error');
+  assert.deepEqual(log.lines, ['⚠️ [エラー] ラベル一覧の同期に失敗しました: lock timeout']);
+  assert.deepEqual(calls, { readArchiveRules: 0, listUserLabelNames: 0, archiveRule: 0 });
   cleanup();
 });
 
