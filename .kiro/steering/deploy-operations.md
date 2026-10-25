@@ -38,7 +38,8 @@ main へ push → test ジョブ（npm test）→ [成功時のみ] deploy ジ�
 ## .clasp.json の placeholder パターン
 
 - コミット版 `.clasp.json` の `scriptId` は placeholder（`REPLACE_WITH_YOUR_SCRIPT_ID`）に固定し、実 scriptId はコミットしない。
-- 実 scriptId は `GAS_SCRIPT_ID` でのみ管理し、CI が注入する。ローカルで実値に書き換えても**コミットしない**こと（push 時に placeholder へ戻す／追跡対象外の `.clasp.json` を使う）。
+- 実 scriptId は `GAS_SCRIPT_ID` でのみ管理し、CI が注入する。
+- ローカルでは `.clasp.json` を書き換えず、実 scriptId を入れた `.clasp.json.local`（`.gitignore` 済み）を作り、`clasp -P .clasp.json.local <command>` で指定する。`rootDir` は `.clasp.json.local` の位置から解決されるため、リポジトリ直下に置く。
 - `.clasprc.json` は `.gitignore` 済み。認証情報は常に Secret 経由でのみ扱う。
 
 ## clasp / ランナーのバージョン固定

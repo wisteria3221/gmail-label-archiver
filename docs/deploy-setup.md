@@ -82,19 +82,19 @@
 
 ### `GAS_SCRIPT_ID` とは
 
-- デプロイ先 GAS プロジェクトの **scriptId** です。ローカルの（リポジトリには追跡されない）`.clasp.json` の `scriptId` の値、または Apps Script プロジェクトの URL（`https://script.google.com/.../projects/<scriptId>/edit` の `<scriptId>` 部分）から取得できます。`clasp` で初期セットアップ（`clasp clone` / `clasp create`）を行った場合は、生成された `.clasp.json` の `scriptId` に該当します。
+- デプロイ先 GAS プロジェクトの **scriptId** です。ローカルの（リポジトリには追跡されない）`.clasp.json.local` の `scriptId` の値、または Apps Script プロジェクトの URL（`https://script.google.com/.../projects/<scriptId>/edit` の `<scriptId>` 部分）から取得できます。
 
 ### 手順
 
 1. **scriptId を確認する**
 
-   ローカルの `.clasp.json` の `scriptId` フィールドの値を控えます。
+   ローカルの `.clasp.json.local` の `scriptId` フィールドの値を控えます。
 
    ```sh
-   jq -r '.scriptId' .clasp.json
+   jq -r '.scriptId' .clasp.json.local
    ```
 
-   > 注意: リポジトリにコミットされている `.clasp.json` の `scriptId` は placeholder（`REPLACE_WITH_YOUR_SCRIPT_ID`）です。実 scriptId はローカルの追跡対象外 `.clasp.json` か Apps Script プロジェクトの URL から取得してください。
+   > 注意: リポジトリにコミットされている `.clasp.json` の `scriptId` は placeholder（`REPLACE_WITH_YOUR_SCRIPT_ID`）です。実 scriptId はローカルの追跡対象外 `.clasp.json.local` か Apps Script プロジェクトの URL から取得してください。
 
 2. **scriptId を Secret に登録する**
 

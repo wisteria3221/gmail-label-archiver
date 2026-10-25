@@ -46,14 +46,18 @@ Gmail の指定ラベルが付いたスレッドを、ラベルごとに設定�
 
 ### 手順
 
-1. **Apps Script プロジェクトを用意** — `clasp create` または既存プロジェクトを `clasp clone`。生成された `.clasp.json` の `scriptId` を控える。
-   > リポジトリにコミットされている [.clasp.json](.clasp.json) の `scriptId` は placeholder（`REPLACE_WITH_YOUR_SCRIPT_ID`）です。ローカルでは実 scriptId に置き換えてください（自動デプロイでは Secret から注入されます。下記参照）。
-2. **ソースを反映** — `npx @google/clasp@3 push` で `src/` を Apps Script へ同期。
-3. **Script Property を登録** — Apps Script エディタ → プロジェクトの設定 → スクリプト プロパティ:
+1. **Apps Script プロジェクトを用意** — Apps Script で新規プロジェクトを作成し（または既存プロジェクトを使い）、URL（`https://script.google.com/.../projects/<scriptId>/edit`）から `scriptId` を控える。
+2. **ローカル用プロジェクトファイルを作成** — `.clasp.json` をコピーして `.clasp.json.local` を作り、`scriptId` を実 scriptId に書き換える。
+   ```sh
+   jq --arg id '<scriptId>' '.scriptId = $id' .clasp.json > .clasp.json.local
+   ```
+   > リポジトリにコミットされている [.clasp.json](.clasp.json) の `scriptId` は placeholder（`REPLACE_WITH_YOUR_SCRIPT_ID`）で、**書き換えずにそのまま維持します**（自動デプロイでは Secret から注入されます。下記参照）。`.clasp.json.local` は `.gitignore` 済みです。リポジトリ直下で `clasp create` / `clasp clone` を実行すると `.clasp.json` が上書きされるため避けてください。
+3. **ソースを反映** — `npx @google/clasp@3 -P .clasp.json.local push` で `src/` を Apps Script へ同期。
+4. **Script Property を登録** — Apps Script エディタ → プロジェクトの設定 → スクリプト プロパティ:
    - `CONFIG_SPREADSHEET_ID` = 設定スプレッドシートの ID（**必須**）
    - `CONFIG_SHEET_NAME` = シート名（任意。省略時は `settings`）
-4. **日次トリガーを作成** — Apps Script エディタで `setupDailyTrigger` を 1 回実行（既定で毎日 3 時台に実行）。初回実行時に OAuth 同意（Gmail / Spreadsheet / トリガー権限）を承認。
-5. **動作確認** — `archiveLabeledThreads` を手動実行し、実行ログと Gmail の状態を確認。
+5. **日次トリガーを作成** — Apps Script エディタで `setupDailyTrigger` を 1 回実行（既定で毎日 3 時台に実行）。初回実行時に OAuth 同意（Gmail / Spreadsheet / トリガー権限）を承認。
+6. **動作確認** — `archiveLabeledThreads` を手動実行し、実行ログと Gmail の状態を確認。
 
 手動での統合検証手順は [docs/manual-verification.md](docs/manual-verification.md) を参照してください。
 

@@ -4,3 +4,17 @@ node_modules/
 .claude/settings.local.json
 .kiro/*
 !.kiro/steering/
+
+# ローカル用 clasp プロジェクトファイル（実 scriptId を含むためコミットしない）
+.clasp.json.local
+
+# logs
+*.log
+npm-debug.log*
+
+# env / secrets
+.env
+.env.*
+
+# test coverage
+coverage/

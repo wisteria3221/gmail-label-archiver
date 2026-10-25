@@ -45,7 +45,7 @@ TypeScript は使わず、純粋な JavaScript + JSDoc で型を表現する。`
 
 ```bash
 # テスト: npm test               # node --test で純粋ロジックの単体テスト
-# 反映: npx @google/clasp@3 push # src/ を GAS プロジェクトへ同期
+# 反映: npx @google/clasp@3 -P .clasp.json.local push # src/ を GAS プロジェクトへ同期（実 scriptId は .clasp.json.local）
 ```
 
 ## 重要な技術的判断

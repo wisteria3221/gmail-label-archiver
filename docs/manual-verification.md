@@ -29,8 +29,8 @@
 
 ## セットアップ
 
-1. `.clasp.json` の `scriptId` を自分の Apps Script プロジェクト ID に置き換える。
-2. `clasp push` で `src/` を Apps Script へ反映。
+1. `.clasp.json` をコピーして `.clasp.json.local` を作り、`scriptId` を自分の Apps Script プロジェクト ID に置き換える（`.clasp.json` 自体は placeholder のまま変更しない）。
+2. `clasp -P .clasp.json.local push` で `src/` を Apps Script へ反映。
 3. Apps Script エディタ → プロジェクトの設定 → スクリプト プロパティに以下を登録:
    - `CONFIG_SPREADSHEET_ID` = 設定スプレッドシートの ID（必須）
    - `CONFIG_SHEET_NAME` = シート名（省略時は `settings`）
