@@ -9,11 +9,11 @@
 ### ソース（GAS 同期対象）
 **場所**: `/src/`
 **役割**: GAS にデプロイされる本体。`.clasp.json` の `rootDir` がここを指す。1 ファイル = 1 サービス/責務。
-**依存レイヤ**: `Constants.js`（共有定数・依存なし）→ `Config.js`（設定読取・行検証 = ConfigService）→ `Archiver.js`（対象抽出・権威的判定・バッチアーカイブ = ArchiveService）→ `Main.js`（エントリ・オーケストレーション・トリガー管理）。`appsscript.json` は GAS マニフェスト（タイムゾーン・ランタイム・OAuth スコープ）。
+**依存レイヤ**: `Constants.js`（共有定数・依存なし）→ `Config.js`（設定読取・行検証 = ConfigService）→ `Archiver.js`（対象抽出・権威的判定・バッチアーカイブ = ArchiveService）→ `SheetSync.js`（旧形式シートの移行・Gmail ラベル一覧の設定シートへの同期 = SheetSyncService）→ `Main.js`（エントリ・オーケストレーション・トリガー管理）。設定シートの読み取りは `Config.js`、書き込みは `SheetSync.js` だけが担う。`appsscript.json` は GAS マニフェスト（タイムゾーン・ランタイム・OAuth スコープ）。
 
 ### テスト
 **場所**: `/test/`
-**役割**: `src/` の各ファイルに 1 対 1 対応する単体テスト（`<Source>.test.js`）。`node --test` で実行。GAS API 依存部はテスト内のフェイクで代替し、純粋関数は直接検証。
+**役割**: `src/` の各ファイルに 1 対 1 対応する単体テスト（`<Source>.test.js`）。`node --test` で実行。GAS API 依存部はテスト内のフェイクで代替し、純粋関数は直接検証。例外として、複数ファイルをまたぐ結合テスト（旧形式シートの移行から日次実行までを通す等）は `Integration.test.js` に置く。
 
 ### ドキュメント
 **場所**: `/docs/`
@@ -25,8 +25,8 @@
 
 ## 命名規則
 
-- **ソースファイル**: PascalCase（`Constants.js` / `Config.js` / `Archiver.js` / `Main.js`）。サービス相当の責務単位。
-- **テストファイル**: `<Source>.test.js`（対応するソースと同名 + `.test`）。
+- **ソースファイル**: PascalCase（`Constants.js` / `Config.js` / `Archiver.js` / `SheetSync.js` / `Main.js`）。サービス相当の責務単位。
+- **テストファイル**: `<Source>.test.js`（対応するソースと同名 + `.test`）。ファイル横断の結合テストのみ `Integration.test.js`。
 - **関数**: lowerCamelCase（`archiveLabeledThreads` / `readArchiveRules` / `buildQuery`）。ファイル内専用の補助関数は末尾アンダースコア（`findHeaderColumn_`）。
 - **定数**: UPPER_SNAKE_CASE（`MAX_THREADS_PER_RUN`）。Script Property キーは `PROP_` 接頭辞、ヘッダ名は `HEADER_` 接頭辞。
 
@@ -42,7 +42,7 @@ if (typeof module !== 'undefined' && module.exports) {
 
 ## コード構成の原則
 
-- **一方向依存を守る**: 下位レイヤは上位を参照しない（`Constants` ← `Config` / `Archiver` ← `Main`）。新しい共有定数は `Constants.js` に追加する（マジックナンバーをファイル内に直書きしない）。
+- **一方向依存を守る**: 下位レイヤは上位を参照しない（`Constants` ← `Config` ← `Archiver` ← `SheetSync` ← `Main`）。新しい共有定数は `Constants.js` に追加する（マジックナンバーをファイル内に直書きしない）。
 - **純粋関数を分離する**: GAS API（`GmailApp` 等）に触れない判定・整形ロジックは純粋関数として切り出し、テスト容易性を確保する。
 - **JSDoc で契約を明示する**: `@typedef` / `@param` / `@returns` と前提条件・要件参照を関数の上に記述する。
 - **ログ形式を踏襲する**: 新規ログは絵文字 + タグ + 日本語の既存パターンに合わせ、`console.log` 経由（`logLine` / `logSummary` パターン）で出力する。
