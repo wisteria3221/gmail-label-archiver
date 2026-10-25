@@ -47,7 +47,7 @@ Gmail の指定ラベルが付いたスレッドを、ラベルごとに設定�
 ### 前提
 
 - Google アカウント（個人 Gmail）
-- [clasp](https://github.com/google/clasp) v3（`npx @google/clasp@3`）と Node.js 20
+- [clasp](https://github.com/google/clasp) v3（`npx @google/clasp@3`）と Node.js 24（`.node-version` で指定）
 
 ### 手順
 

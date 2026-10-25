@@ -9,7 +9,7 @@ Google Apps Script (GAS) の単一プロジェクト。`src/*.js` は GAS ラン
 - **言語**: JavaScript（GAS V8 ランタイム / ES2019 相当の構文）
 - **プラットフォーム**: Google Apps Script（`GmailApp` / `SpreadsheetApp` / `PropertiesService` / `ScriptApp`）
 - **デプロイツール**: clasp v3（`npx @google/clasp@3`）
-- **ローカル実行**: Node.js 20（テスト実行のみ）
+- **ローカル実行**: Node.js 24（テスト実行のみ。`.node-version` で指定）
 
 ## 主要ライブラリ
 
@@ -37,7 +37,7 @@ TypeScript は使わず、純粋な JavaScript + JSDoc で型を表現する。`
 
 ### 必須ツール
 
-- Node.js 20
+- Node.js 24（`.node-version`）
 - clasp v3（ローカル push / clone 用、`npx @google/clasp@3`）
 - Google アカウントと OAuth 同意（初回実行時に Gmail / Spreadsheet / トリガー権限を承認）
 

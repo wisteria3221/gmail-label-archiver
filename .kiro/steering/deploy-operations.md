@@ -46,7 +46,7 @@ main へ push → test ジョブ（npm test）→ [成功時のみ] deploy ジ�
 
 ## clasp / ランナーのバージョン固定
 
-- clasp は v3 系に固定（`npx @google/clasp@3`）。Node 20 ランナー前提。
+- clasp は v3 系に固定（`npx @google/clasp@3`）。Node 24 ランナー前提（`.node-version` を `setup-node` が参照）。
 - 認証ファイルは v3 の `tokens` マップ形式（`{"tokens": {"default": {...}}}`）。v2 のフラット形式を `CLASPRC_JSON` に貼ると `default` を読めず "not logged in" 相当で失敗する。Secret 登録・更新は必ず `clasp login`（v3）で生成したファイルの全文を verbatim で使う。
 
 ## CI 外の前提（一度きりの手動作業）

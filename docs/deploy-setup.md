@@ -8,7 +8,7 @@
 - **テストゲート**: ワークフローはまず `test` ジョブで `npm test`（`node --test`）を実行します。`deploy` ジョブは `needs: test` でゲートされており、**テストが成功した場合のみ**デプロイへ進みます。テスト失敗時はデプロイがスキップされ、ワークフローは失敗で終了します。
 - **デプロイ内容**: `deploy` ジョブが Secret `CLASPRC_JSON` をランナー上の `~/.clasprc.json` に展開し、続いて Secret `GAS_SCRIPT_ID` の値を `jq` で `.clasp.json` の `scriptId` フィールドへ注入したうえで、`npx @google/clasp@3 push --force` を実行して `.clasp.json` の `scriptId` が指す GAS プロジェクトへ `src/` 配下を同期します（ソース同期のみ。バージョン付きデプロイは行いません）。
 - **scriptId の扱い**: リポジトリにコミットされている `.clasp.json` の `scriptId` は placeholder（`REPLACE_WITH_YOUR_SCRIPT_ID`）であり、実際の scriptId はリポジトリに含めません。実 scriptId は Secret `GAS_SCRIPT_ID` でのみ管理し、デプロイ時にワークフローが注入します。したがって自動デプロイには `CLASPRC_JSON` と `GAS_SCRIPT_ID` の **両方** の Secret が必要です。
-- **clasp バージョン**: clasp v3 系（`@google/clasp@3`、Node 20）に固定しています。認証ファイルの形式は v3 仕様（後述の `tokens` 形式）です。
+- **clasp バージョン**: clasp v3 系（`@google/clasp@3`、Node 24 は `.node-version` で指定）に固定しています。認証ファイルの形式は v3 仕様（後述の `tokens` 形式）です。
 
 自動デプロイを成立させるには、以下の **5 つの前提作業 / 運用手順** が必要です。順に実施してください。
 

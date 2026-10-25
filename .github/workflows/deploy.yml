@@ -29,10 +29,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Set up Node.js 20
+      - name: Set up Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version-file: .node-version
 
       - name: Run tests
         run: npm test
@@ -48,10 +48,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Set up Node.js 20
+      - name: Set up Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version-file: .node-version
 
       # Secret を環境変数経由でランナー上の認証ファイルへ展開する。
       # printf '%s' + 環境変数経由のため、認証情報がコマンド行やログに露出しない。
