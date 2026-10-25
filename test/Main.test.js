@@ -52,66 +52,115 @@ test('empty rules: archiveRule and listUserLabelNames are never called, returns 
   cleanup();
 });
 
-// --- 5.1: 残予算が各ルールへ正しく伝播（前ルールの archivedCount だけ減る） ---
+// --- 5.1: 予算の公平配分（各ルールに残予算 ÷ 残ルール数、余りは後続・2 巡目へ） ---
 
-test('ample budget: remaining decreases by previous rule archivedCount (5.1)', () => {
-  const rules = [
-    { labelName: 'A', retentionDays: 30 },
-    { labelName: 'B', retentionDays: 30 },
-    { labelName: 'C', retentionDays: 30 },
-  ];
-  const archivedByLabel = { A: 10, B: 25, C: 0 };
-  const remainingArgs = [];
-
-  globalThis.readArchiveRules = () => rules;
-  // 子孫ラベルなし: 展開しても明示ルールのみ（順序維持を確認）。
-  globalThis.listUserLabelNames = () => ['A', 'B', 'C'];
+/**
+ * 各ラベルの滞留件数 backlog を持つ archiveRule スタブを設置する。
+ * 渡された予算 remaining の範囲で滞留を消化し、呼び出し履歴を calls に記録する。
+ */
+function installBacklogArchiveRule(backlog) {
+  const calls = [];
+  const left = Object.assign({}, backlog);
   globalThis.archiveRule = (rule, now, remaining) => {
-    remainingArgs.push({ labelName: rule.labelName, remaining });
     assert.ok(now instanceof Date, 'now must be a Date');
-    return {
-      labelName: rule.labelName,
-      archivedCount: archivedByLabel[rule.labelName],
-      candidateCount: archivedByLabel[rule.labelName],
-    };
+    const archived = Math.min(left[rule.labelName], remaining);
+    left[rule.labelName] -= archived;
+    calls.push({ labelName: rule.labelName, remaining, archived });
+    return { labelName: rule.labelName, archivedCount: archived, candidateCount: archived };
   };
+  return calls;
+}
+
+function setRules(names) {
+  globalThis.readArchiveRules = () => names.map((n) => ({ labelName: n, retentionDays: 30 }));
+  globalThis.listUserLabelNames = () => names.slice();
+}
+
+test('fair share: every rule gets an equal share when all have large backlogs (5.1)', () => {
+  setRules(['A', 'B', 'C']);
+  const calls = installBacklogArchiveRule({ A: 1000, B: 1000, C: 1000 });
 
   archiveLabeledThreads();
 
-  assert.equal(remainingArgs.length, 3, 'archiveRule called once per rule');
-  assert.equal(remainingArgs[0].remaining, MAX_THREADS_PER_RUN);
-  assert.equal(remainingArgs[1].remaining, MAX_THREADS_PER_RUN - 10);
-  assert.equal(remainingArgs[2].remaining, MAX_THREADS_PER_RUN - 10 - 25);
-
+  assert.deepEqual(
+    calls.map((c) => [c.labelName, c.remaining, c.archived]),
+    [
+      ['A', 100, 100],
+      ['B', 100, 100],
+      ['C', 100, 100],
+    ]
+  );
   cleanup();
 });
 
-// --- 5.1: 予算枯渇 → 以降のルールをスキップ ---
+test('fair share: unused share of an earlier rule flows to later rules (5.1)', () => {
+  setRules(['A', 'B', 'C']);
+  const calls = installBacklogArchiveRule({ A: 10, B: 1000, C: 1000 });
 
-test('budget exhaustion: later rules are skipped (5.1)', () => {
-  const rules = [
-    { labelName: 'A', retentionDays: 30 },
-    { labelName: 'B', retentionDays: 30 },
-    { labelName: 'C', retentionDays: 30 },
-  ];
-  const calledLabels = [];
+  archiveLabeledThreads();
 
-  globalThis.readArchiveRules = () => rules;
-  globalThis.listUserLabelNames = () => ['A', 'B', 'C'];
-  globalThis.archiveRule = (rule) => {
-    calledLabels.push(rule.labelName);
-    // First rule consumes the entire budget.
-    const archived = rule.labelName === 'A' ? MAX_THREADS_PER_RUN : 0;
-    return {
-      labelName: rule.labelName,
-      archivedCount: archived,
-      candidateCount: archived,
-    };
-  };
+  assert.deepEqual(
+    calls.map((c) => [c.labelName, c.remaining, c.archived]),
+    [
+      ['A', 100, 10],
+      ['B', 145, 145],
+      ['C', 145, 145],
+    ]
+  );
+  cleanup();
+});
 
-  assert.doesNotThrow(() => archiveLabeledThreads());
-  assert.deepEqual(calledLabels, ['A'], 'rules B and C must be skipped once budget is 0');
+test('fair share: leftover budget goes to rules that hit their share in a second pass (5.1)', () => {
+  setRules(['A', 'B', 'C']);
+  const calls = installBacklogArchiveRule({ A: 1000, B: 0, C: 0 });
 
+  archiveLabeledThreads();
+
+  assert.deepEqual(
+    calls.map((c) => [c.labelName, c.remaining, c.archived]),
+    [
+      ['A', 100, 100],
+      ['B', 100, 0],
+      ['C', 200, 0],
+      ['A', 200, 200],
+    ]
+  );
+  const total = calls.reduce((n, c) => n + c.archived, 0);
+  assert.equal(total, MAX_THREADS_PER_RUN);
+  cleanup();
+});
+
+test('fair share: more rules than budget gives each at least 1 until exhausted (5.1)', () => {
+  const names = [];
+  for (let i = 0; i < MAX_THREADS_PER_RUN + 5; i++) names.push('L' + i);
+  setRules(names);
+  const backlog = {};
+  for (const n of names) backlog[n] = 10;
+  const calls = installBacklogArchiveRule(backlog);
+
+  archiveLabeledThreads();
+
+  assert.equal(calls.length, MAX_THREADS_PER_RUN, 'rules beyond the budget are skipped');
+  assert.ok(calls.every((c) => c.remaining === 1));
+  cleanup();
+});
+
+test('fair share: summary reports each rule once with its total across passes', () => {
+  setRules(['A', 'B']);
+  installBacklogArchiveRule({ A: 1000, B: 0 });
+  const lines = [];
+  const original = console.log;
+  console.log = (line) => lines.push(String(line));
+  try {
+    archiveLabeledThreads();
+  } finally {
+    console.log = original;
+  }
+
+  const summary = lines.find((l) => l.startsWith('📊 [サマリ]'));
+  assert.ok(summary, 'summary must be logged');
+  assert.ok(summary.includes('ルール 2件中 処理成功 2件'));
+  assert.ok(summary.includes('[「A」300件, 「B」0件]'), summary);
   cleanup();
 });
 

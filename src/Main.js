@@ -30,12 +30,16 @@
  * 3. 1 件以上なら `listUserLabelNames()` で全ラベル名を取得し（失敗時はログして
  *    再 throw）、`expandRules(rules, labelNames)` で対象を子孫へ展開（6.1）。
  * 4. 残予算 `remaining` を `MAX_THREADS_PER_RUN` で初期化し、実行全体で 1 つの
- *    `seenThreadIds`（処理済みスレッド ID 集合、6.8）を生成して各ルールを順に処理。
- *    - `remaining <= 0` で以降のルールをスキップ（実行全体の予算枯渇、次回持ち越し、5.1）。
- *    - `archiveRule(rule, now, remaining, seenThreadIds)` を呼び
- *      `remaining -= result.archivedCount` を更新（5.1）。共有集合により親子両ラベル付き
- *      スレッドの実行内重複を防ぐ（6.8）。
- *    - ルール単位 try/catch でエラーを記録し次ルールへ継続（5.2）。
+ *    `seenThreadIds`（処理済みスレッド ID 集合、6.8）を生成して、予算を公平配分しながら
+ *    各ルールを処理する（先頭ルールの滞留が後続ルールを毎回締め出さないように）。
+ *    - 1 巡目: 各ルールに `max(1, floor(remaining / 残ルール数))` を割り当てて
+ *      `archiveRule(rule, now, 割当, seenThreadIds)` を呼ぶ。使い切らなかった分は
+ *      `remaining` に残り、後続ルールの割当へ自然に回る（5.1）。
+ *    - 2 巡目: 割当を使い切った（滞留が残っている可能性がある）ルールに、残った
+ *      `remaining` を順に全量渡す。1 巡目でアーカイブ済みのスレッドは共有集合で除外（6.8）。
+ *    - `remaining <= 0` で以降をスキップ（実行全体の予算枯渇、次回持ち越し、5.1）。
+ *    - ルール単位 try/catch でエラーを記録し次ルールへ継続（5.2）。エラーのルールは
+ *      2 巡目の対象外。
  * 5. 実行サマリ（処理ルール数・ルール別件数・エラー数・残予算）を標準ログへ出力（5.4）。
  * 6. ルール単位のエラーが 1 件以上あれば、サマリ出力後に throw する（失敗通知）。
  *
@@ -75,37 +79,69 @@ function archiveLabeledThreads() {
   }
   rules = expandRules(rules, labelNames);
 
-  // 4. 残予算と実行全体で共有する処理済みスレッド ID 集合（6.8）を初期化し順次処理。
+  // 4. 残予算と実行全体で共有する処理済みスレッド ID 集合（6.8）を初期化し、予算を公平配分して処理。
   let remaining = MAX_THREADS_PER_RUN;
   const now = new Date();
   const seenThreadIds = new Set();
-  const perRule = [];
-  let processedCount = 0;
+  const archivedByRule = [];
+  const attempted = [];
+  const failed = [];
+  const hitShare = [];
   let errorCount = 0;
 
-  for (let i = 0; i < rules.length; i++) {
+  // ルール i を budget 件までで処理し、結果を集計する。エラーは記録して継続（5.2）。
+  const runRule = (i, budget) => {
     const rule = rules[i];
-
-    // 実行全体の予算枯渇 → 以降のルールをスキップ（5.1、次回持ち越し）。
-    if (remaining <= 0) {
-      break;
-    }
-
+    attempted[i] = true;
     try {
-      const result = archiveRule(rule, now, remaining, seenThreadIds);
+      const result = archiveRule(rule, now, budget, seenThreadIds);
       remaining -= result.archivedCount;
-      processedCount += 1;
-      perRule.push('「' + rule.labelName + '」' + result.archivedCount + '件');
+      archivedByRule[i] = (archivedByRule[i] || 0) + result.archivedCount;
+      return result.archivedCount;
     } catch (err) {
-      // ルール単位のエラーを記録し、次ルールへ継続（5.2）。
       errorCount += 1;
-      perRule.push('「' + rule.labelName + '」エラー');
+      failed[i] = true;
       logLine(
         '⚠️ [エラー] ラベル「' +
           rule.labelName +
           '」の処理中にエラーが発生しました: ' +
           errorMessage(err)
       );
+      return 0;
+    }
+  };
+
+  // 1 巡目: 残予算 ÷ 残ルール数（最低 1）を割り当てる。余りは後続ルールへ回る（5.1）。
+  for (let i = 0; i < rules.length; i++) {
+    if (remaining <= 0) {
+      break;
+    }
+    const share = Math.max(1, Math.floor(remaining / (rules.length - i)));
+    hitShare[i] = runRule(i, share) >= share;
+  }
+
+  // 2 巡目: 割当を使い切ったルールへ、残った予算を順に全量渡す（5.1）。
+  for (let i = 0; i < rules.length; i++) {
+    if (remaining <= 0) {
+      break;
+    }
+    if (hitShare[i] && !failed[i]) {
+      runRule(i, remaining);
+    }
+  }
+
+  // ルール別件数（複数巡の合算）。予算枯渇で未着手のルールは含めない。
+  const perRule = [];
+  let processedCount = 0;
+  for (let i = 0; i < rules.length; i++) {
+    if (!attempted[i]) {
+      continue;
+    }
+    if (failed[i]) {
+      perRule.push('「' + rules[i].labelName + '」エラー');
+    } else {
+      processedCount += 1;
+      perRule.push('「' + rules[i].labelName + '」' + (archivedByRule[i] || 0) + '件');
     }
   }
 
