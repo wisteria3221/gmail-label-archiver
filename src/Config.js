@@ -106,7 +106,7 @@ function openConfigSheet() {
 /**
  * ヘッダ行から 5 列（対象・ラベル名・保持日数・適用日数・状態）の位置を解決する純粋関数。
  * ヘッダ名で照合するため列順に依存せず、セル値の前後空白は無視する（2.4）。
- * 見つからない列は -1。必須列（ラベル名・保持日数）の欠落判定は呼び出し側が行う（6.4）。
+ * 見つからない列は -1。必須列（ラベル名・保持日数）の欠落判定は `assertRequiredColumns` で行う（6.4）。
  *
  * @param {Array<*>} header 1 行目のセル値配列
  * @returns {ColumnMap} 0 始まりの列番号。見つからなければ -1。
@@ -119,6 +119,26 @@ function resolveColumns(header) {
     appliedDays: findHeaderColumn_(header, HEADER_APPLIED_DAYS),
     status: findHeaderColumn_(header, HEADER_STATUS),
   };
+}
+
+/**
+ * 必須列（ラベル名・保持日数）が解決できているかを検証し、欠けていれば構成不備として throw する。
+ * 読取（`readArchiveRules`）と同期（`syncLabelSheet`）で文言を揃えるため、判定をここに集約する（6.4）。
+ *
+ * @param {ColumnMap} columns `resolveColumns` の戻り値
+ * @returns {void}
+ * @throws {Error} ラベル名列または保持日数列が無い場合（スキーマ不一致＝構成不備）
+ */
+function assertRequiredColumns(columns) {
+  if (columns.label === -1 || columns.days === -1) {
+    throw new Error(
+      'ヘッダが不正です。期待: "' +
+        HEADER_LABEL +
+        '" / "' +
+        HEADER_DAYS +
+        '"（スキーマ不一致＝構成不備）。'
+    );
+  }
 }
 
 /**
@@ -255,15 +275,7 @@ function readArchiveRules() {
   const values = sheet.getDataRange().getValues();
   const header = values.length > 0 ? values[0] : [];
   const columns = resolveColumns(header);
-  if (columns.label === -1 || columns.days === -1) {
-    throw new Error(
-      'ヘッダが不正です。期待: "' +
-        HEADER_LABEL +
-        '" / "' +
-        HEADER_DAYS +
-        '"（スキーマ不一致＝構成不備）。'
-    );
-  }
+  assertRequiredColumns(columns);
 
   // 3. 行の分類と明示ルールの決定は collectExplicitRules に一任する（3.1, 3.5, 3.6, 4.6）。
   const ruleSet = collectExplicitRules(values, columns);
@@ -379,6 +391,7 @@ if (typeof module !== 'undefined' && module.exports) {
     validateRow,
     openConfigSheet,
     resolveColumns,
+    assertRequiredColumns,
     collectExplicitRules,
     readArchiveRules,
     expandRules,

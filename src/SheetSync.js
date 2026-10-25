@@ -215,15 +215,7 @@ function syncLabelSheetLocked_() {
   const sheet = openConfigSheet();
   let values = sheet.getDataRange().getValues();
   let columns = resolveColumns(values[0] || []);
-  if (columns.label === -1 || columns.days === -1) {
-    throw new Error(
-      'ヘッダが不正です。期待: "' +
-        HEADER_LABEL +
-        '" / "' +
-        HEADER_DAYS +
-        '"（スキーマ不一致＝構成不備）。'
-    );
-  }
+  assertRequiredColumns(columns);
 
   // 3. 旧形式（対象 列なし）なら移行する。新形式なら何もしない（4.8）。
   let migrated = false;

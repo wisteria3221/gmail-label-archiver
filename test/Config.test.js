@@ -488,6 +488,31 @@ test('openConfigSheet: absent CONFIG_SHEET_NAME opens DEFAULT_SHEET_NAME', () =>
   assert.equal(openConfigSheet().getDataRange().getValues(), settings);
 });
 
+// --- assertRequiredColumns (6.4) ---
+
+const { assertRequiredColumns } = require('../src/Config.js');
+
+const HEADER_ERROR_MESSAGE =
+  'ヘッダが不正です。期待: "ラベル名" / "保持日数"（スキーマ不一致＝構成不備）。';
+
+test('assertRequiredColumns: ラベル名・保持日数があれば throw しない（対象などの欠落は問わない）', () => {
+  assert.doesNotThrow(() => assertRequiredColumns(resolveColumns(['ラベル名', '保持日数'])));
+});
+
+test('assertRequiredColumns: ラベル名が無ければ構成不備の文言で throw する（6.4）', () => {
+  assert.throws(
+    () => assertRequiredColumns(resolveColumns(['対象', '保持日数'])),
+    { message: HEADER_ERROR_MESSAGE }
+  );
+});
+
+test('assertRequiredColumns: 保持日数が無ければ構成不備の文言で throw する（6.4）', () => {
+  assert.throws(
+    () => assertRequiredColumns(resolveColumns(['対象', 'ラベル名'])),
+    { message: HEADER_ERROR_MESSAGE }
+  );
+});
+
 // --- resolveColumns (2.4) ---
 
 test('resolveColumns: resolves all five columns in canonical order (2.4)', () => {
