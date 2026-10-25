@@ -12,6 +12,8 @@
  * 純粋関数で、SpreadsheetApp / GmailApp には依存しない（テスト容易性のため分離）。
  * `planSheetSync` は新形式シートの全値と Gmail ラベル一覧から同期計画（追記行・
  * 自動列の値・欠けた自動列ヘッダ）を作る純粋関数で、同じく外部 API に依存しない。
+ * `syncLabelSheet` はロック取得・移行・同期計画の作成・シートへの書き込みを行う
+ * 唯一の副作用関数で、SpreadsheetApp / LockService と listUserLabelNames に依存する。
  */
 
 /**
@@ -166,10 +168,151 @@ function lookupDays_(daysByKey, key) {
   return Object.prototype.hasOwnProperty.call(daysByKey, key) ? daysByKey[key] : '';
 }
 
+/**
+ * @typedef {Object} SyncResult
+ * @property {boolean} migrated             旧形式から移行したか
+ * @property {number}  migratedCheckedCount 移行で対象にした行数（未移行なら 0、4.7）
+ * @property {number}  appendedCount        末尾に追記した行数（5.3）
+ * @property {number}  missingCount         状態が STATUS_MISSING の行数（5.3）
+ */
+
+/**
+ * スクリプトロックを取得し、必要なら旧形式を移行してから、Gmail ラベル一覧と
+ * 設定シートを同期する。失敗は throw する（ログ・継続判断は呼び出し側）。
+ *
+ * 書き込むのは次の 4 種類だけで、既存行の 対象・ラベル名・保持日数 には
+ * 書き込まない（1.3, 1.4, 2.3, 4.2）。
+ *   (d) 移行時: 先頭に列を挿入し、A 列へ [対象, ...チェック値] を 1 回で書く（4.1）。
+ *   (c) 欠けた自動列ヘッダ（適用日数・状態）を右端に追加する（2.1）。
+ *   (a) appendNames を最終行の下に一括で追記する（対象 false・保持日数 ''、1.1, 4.5）。
+ *       ラベル名は常に先頭に ' を付けて文字列として書く（数式・数値/日付への自動変換を防ぐ）。
+ *   (b) 適用日数・状態 列のデータ行を一括で上書きする（2.5〜2.8）。
+ * 最後に 対象 列のデータ行へチェックボックスの入力規則を設定する（値は変えない、2.2）。
+ * 2 回目以降は追記・ヘッダ追加が空になり、同じ値が書かれるだけなので内容は変わらない（5.4）。
+ * システムラベルは listUserLabelNames（getUserLabels）が返さないため追記されない（1.7）。
+ *
+ * @returns {SyncResult}
+ * @throws {Error} ロック取得のタイムアウト、構成不備（6.3）、ヘッダ不正（6.4）、
+ *   Gmail / Sheets API の失敗。
+ */
+function syncLabelSheet() {
+  // 1. 同時実行を防ぐ。取得できなければ waitLock が throw する（取得前なので解放不要）。
+  const lock = LockService.getScriptLock();
+  lock.waitLock(SYNC_LOCK_TIMEOUT_MS);
+  try {
+    return syncLabelSheetLocked_();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * ロック取得後の同期本体（syncLabelSheet からのみ呼ぶ）。
+ * @returns {SyncResult}
+ */
+function syncLabelSheetLocked_() {
+  // 2. 設定シートを読み、列をヘッダで解決する。必須列が無ければ構成不備（6.4）。
+  const sheet = openConfigSheet();
+  let values = sheet.getDataRange().getValues();
+  let columns = resolveColumns(values[0] || []);
+  if (columns.label === -1 || columns.days === -1) {
+    throw new Error(
+      'ヘッダが不正です。期待: "' +
+        HEADER_LABEL +
+        '" / "' +
+        HEADER_DAYS +
+        '"（スキーマ不一致＝構成不備）。'
+    );
+  }
+
+  // 3. 旧形式（対象 列なし）なら移行する。新形式なら何もしない（4.8）。
+  let migrated = false;
+  let migratedCheckedCount = 0;
+  if (columns.target === -1) {
+    const migration = planMigration(values, columns);
+    sheet.insertColumnBefore(1);
+    // 挿入直後にヘッダとチェック値を 1 回で書く（途中失敗時の残骸を最小にする）。
+    const column = [[HEADER_TARGET]].concat(migration.checks.map((c) => [c]));
+    sheet.getRange(1, 1, column.length, 1).setValues(column);
+    // 列番号がずれるため読み直して再解決する。
+    values = sheet.getDataRange().getValues();
+    columns = resolveColumns(values[0] || []);
+    migrated = true;
+    migratedCheckedCount = migration.checkedCount;
+  }
+
+  // 4. 同期計画（純粋関数）。
+  const plan = planSheetSync(values, columns, listUserLabelNames());
+
+  // 5. 欠けた自動列ヘッダを右端に追加し、手元の値も同じ形にして列を再解決する（2.1）。
+  if (plan.missingHeaders.length > 0) {
+    const startCol = sheet.getLastColumn() + 1;
+    sheet.getRange(1, startCol, 1, plan.missingHeaders.length).setValues([plan.missingHeaders]);
+    values = values.map((row) => row.slice());
+    for (let r = 0; r < values.length; r++) {
+      while (values[r].length < startCol - 1) {
+        values[r].push('');
+      }
+    }
+    values[0] = values[0].concat(plan.missingHeaders);
+    columns = resolveColumns(values[0]);
+  }
+  const width = values[0].length;
+  const existingCount = values.length - 1; // 既存データ行数
+
+  // 6. 未登録ラベルを最終行の下に一括で追記する（対象 false・保持日数 ''、1.1, 4.5）。
+  if (plan.appendNames.length > 0) {
+    const rows = plan.appendNames.map((name) => {
+      const row = new Array(width).fill('');
+      row[columns.target] = false;
+      row[columns.label] = asTextLiteral_(name);
+      return row;
+    });
+    sheet.getRange(values.length + 1, 1, rows.length, width).setValues(rows);
+  }
+
+  // 7. 適用日数・状態 列のデータ行（既存行＋追記行）を列ごとに一括で上書きする。
+  const dataCount = existingCount + plan.appendNames.length;
+  if (dataCount > 0) {
+    sheet
+      .getRange(2, columns.appliedDays + 1, dataCount, 1)
+      .setValues(plan.appliedDays.map((d) => [d]));
+    sheet
+      .getRange(2, columns.status + 1, dataCount, 1)
+      .setValues(plan.statuses.map((s) => [s]));
+
+    // 8. 対象 列のデータ行にチェックボックスの入力規則を設定する（2.2）。
+    // insertCheckboxes は範囲の全セルを false にするため使わない。入力規則の設定は
+    // 値を変えないので、利用者のチェックや移行で設定した値は残る（1.3, 4.3）。
+    const checkboxRule = SpreadsheetApp.newDataValidation().requireCheckbox().build();
+    sheet.getRange(2, columns.target + 1, dataCount, 1).setDataValidation(checkboxRule);
+  }
+
+  return {
+    migrated,
+    migratedCheckedCount,
+    appendedCount: plan.appendNames.length,
+    missingCount: plan.missingCount,
+  };
+}
+
+/**
+ * セルに文字列として書くため、先頭に ' を付ける。
+ * Sheets は自動書式のセルで先頭の ' を「文字列として保存する」印として取り除き、
+ * getValues は元の文字列を返す。数式（= + - @ 始まり）や数値・日付（例: 2024, 007,
+ * 1/2）への自動変換を防ぐため、次回の照合キーが Gmail の名前と一致し続ける（5.4）。
+ * @param {string} text
+ * @returns {string}
+ */
+function asTextLiteral_(text) {
+  return "'" + text;
+}
+
 // Node-only export guard: GAS では `module` が未定義のため評価されない。
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     planMigration,
     planSheetSync,
+    syncLabelSheet,
   };
 }
