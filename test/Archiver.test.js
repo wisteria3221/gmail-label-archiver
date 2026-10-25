@@ -84,8 +84,12 @@ test('hasStar: thread without starred messages -> false', () => {
 const RULE_NOW = new Date('2026-06-06T00:00:00Z');
 
 // fake GmailThread: only the methods archiveRule is allowed to use.
+// 実 GmailThread と同様に一意な getId を持たせる。
+let fakeThreadSeq = 0;
 function fakeThread(lastDateISO, starred) {
+  const id = 'fake-' + ++fakeThreadSeq;
   return {
+    getId: () => id,
     getLastMessageDate: () => new Date(lastDateISO),
     hasStarredMessages: () => starred,
   };

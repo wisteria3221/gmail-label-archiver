@@ -6,7 +6,8 @@
  * `validateRow` は副作用のない純粋関数で、GmailApp / SpreadsheetApp /
  * PropertiesService には一切依存しない（テスト容易性のため分離）。
  *
- * `readArchiveRules` は後続タスク（2.2）で同ファイルに追加される。
+ * `readArchiveRules` は Script Property が指す設定シートを読む（SpreadsheetApp 依存）。
+ * `expandRules` は明示ルールを子孫ラベルへ展開する純粋関数。
  */
 
 /**

@@ -8,14 +8,10 @@
  * 渡されたスレッドのメソッドのみ呼ぶ薄いラッパ）で、GmailApp などのグローバル
  * サービスには一切依存しない（テスト容易性のため分離）。
  *
- * `archiveRule`（GmailApp 依存の抽出・アーカイブ本体）は後続タスク（3.2）で
- * 同ファイルに追加される。
- */
-
-/**
- * @typedef {Object} ArchiveRule
- * @property {string} labelName    対象ラベル名（非空）
- * @property {number} retentionDays 受信トレイ保持日数（正の整数）
+ * `archiveRule`（GmailApp 依存の抽出・アーカイブ本体）と `listUserLabelNames`
+ * （ラベル一覧の薄いラッパ）は GmailApp に依存する。
+ *
+ * `ArchiveRule` 型は Config.js で定義する（GAS では全ファイルが同一スコープ）。
  */
 
 /** 1 日のミリ秒数（経過日数換算用）。 */
@@ -116,8 +112,7 @@ function archiveRule(rule, now, remaining, seenThreadIds) {
   }
 
   // 2–4. ページングしながら権威的再判定（最新日時超過 かつ 非スター かつ
-  //      seenThreadIds 未出、2.2/2.5/2.6/6.8）。getId が無いモック（3 引数の既存
-  //      テスト）でも壊れないよう存在ガードする。
+  //      seenThreadIds 未出、2.2/2.5/2.6/6.8）。
   const query = buildQuery(rule);
   const targets = [];
   let candidateCount = 0;
@@ -134,16 +129,14 @@ function archiveRule(rule, now, remaining, seenThreadIds) {
 
     for (let i = 0; i < page.length && targets.length < remaining; i++) {
       const thread = page[i];
-      const id = thread.getId ? thread.getId() : undefined;
+      const id = thread.getId();
       if (
         isOlderThan(thread.getLastMessageDate(), rule.retentionDays, now) &&
         !hasStar(thread) &&
-        !(id !== undefined && seenThreadIds.has(id))
+        !seenThreadIds.has(id)
       ) {
         targets.push(thread);
-        if (id !== undefined) {
-          seenThreadIds.add(id);
-        }
+        seenThreadIds.add(id);
       }
     }
 
